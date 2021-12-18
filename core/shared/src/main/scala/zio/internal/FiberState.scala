@@ -1,77 +1,64 @@
+/*
+ * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package zio.internal
 
 import zio.Fiber.Status
 import zio._
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
-import scala.annotation.tailrec
-
-private[zio] final class FiberState[E, A](executing0: FiberState.Executing[E, A]) extends Serializable {
-  import FiberState._
-
-  private[this] var executing: Executing[E, A] = executing0
-  private[this] var done: Exit[E, A]           = null.asInstanceOf[Exit[E, A]]
-
-  def isExecuting: Boolean = executing ne null
-  def isDone: Boolean      = done ne null
-
-  def addObserver(callback: Callback[Nothing, Exit[E, A]]): Unit =
-    if (isExecuting) executing.observers = callback :: executing.observers
-
-  def getDone: Exit[E, A] = done
-
-  def getInterrupted: Cause[Nothing] = executing.interrupted
-
-  def getStatus: Fiber.Status = executing.status
-
-  def isInterrupting: Boolean = {
-    @tailrec
-    def loop(status0: Fiber.Status): Boolean =
-      status0 match {
-        case Status.Running(b)                      => b
-        case Status.Finishing(b)                    => b
-        case Status.Suspended(previous, _, _, _, _) => loop(previous)
-        case _                                      => false
-      }
-
-    isExecuting && loop(executing.status)
-  }
-
-  def observers: List[Callback[Nothing, Exit[E, A]]] =
-    if (isExecuting) executing.observers else Nil
-
-  def removeObserver(callback: Callback[Nothing, Exit[E, A]]): Unit =
-    if (isExecuting) executing.observers = executing.observers.filter(_ ne callback)
-
-  def setDone(exit: Exit[E, A]): Unit = {
-    executing = null
-    done = exit
-  }
+sealed abstract class FiberState[+E, +A] extends Serializable with Product {
+  def suppressed: Cause[Nothing]
+  def status: Fiber.Status
+  def isInterrupting: Boolean = status.isInterrupting
+  def interruptors: Set[FiberId]
+  def interruptorsCause: Cause[Nothing] =
+    interruptors.foldLeft[Cause[Nothing]](Cause.empty) { case (acc, interruptor) =>
+      acc ++ Cause.interrupt(interruptor)
+    }
 }
 object FiberState extends Serializable {
-  def apply[E, A](
-    startIStatus: InterruptStatus,
-    startEnv: AnyRef,
-    startExec: zio.Executor,
-    supervisor0: Supervisor[Any]
-  ): FiberState[E, A] =
-    new FiberState(new Executing(startIStatus, startEnv, startExec, supervisor0))
+  sealed abstract class CancelerState
 
-  class Executing[E, A](
-    startIStatus: InterruptStatus,
-    startEnv: AnyRef,
-    startExec: zio.Executor,
-    supervisor0: Supervisor[Any]
-  ) {
-    val stack: Stack[Any => IO[Any, Any]]              = Stack()
-    var status: Fiber.Status                           = Status.Running(false)
-    var observers: List[Callback[Nothing, Exit[E, A]]] = Nil
-    var interrupted: Cause[Nothing]                    = Cause.empty
-    @volatile var asyncEpoch: Long                     = 0L
-    val interruptStatus: StackBool                     = StackBool(startIStatus.toBoolean)
-    var currentEnvironment: Any                        = startEnv
-    var currentExecutor: zio.Executor                  = startExec
-    var currentSupervisor: Supervisor[Any]             = supervisor0
-    var currentForkScopeOverride: Option[ZScope]       = None
+  object CancelerState {
+    case object Empty                                              extends CancelerState
+    case object Pending                                            extends CancelerState
+    final case class Registered(asyncCanceler: ZIO[Any, Any, Any]) extends CancelerState
   }
+
+  final case class Executing[E, A](
+    status: Fiber.Status,
+    observers: List[Callback[Nothing, Exit[E, A]]],
+    suppressed: Cause[Nothing],
+    interruptors: Set[FiberId],
+    asyncCanceler: CancelerState,
+    mailbox: UIO[Any]
+  ) extends FiberState[E, A]
+  final case class Done[E, A](value: Exit[E, A]) extends FiberState[E, A] {
+    def suppressed: Cause[Nothing] = Cause.empty
+    def status: Fiber.Status       = Status.Done
+    def interruptors: Set[FiberId] = Set.empty
+  }
+
+  def initial[E, A]: Executing[E, A] =
+    Executing[E, A](
+      Status.Running(false),
+      Nil,
+      Cause.empty,
+      Set.empty[FiberId],
+      CancelerState.Empty,
+      null.asInstanceOf[UIO[Any]]
+    )
 }

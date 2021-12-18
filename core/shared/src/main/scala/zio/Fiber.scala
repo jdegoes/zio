@@ -643,7 +643,6 @@ object Fiber extends FiberPlatformSpecific {
       def loop(status0: Fiber.Status): Boolean =
         status0 match {
           case Status.Running(b)                      => b
-          case Status.Finishing(b)                    => b
           case Status.Suspended(previous, _, _, _, _) => loop(previous)
           case _                                      => false
         }
@@ -656,24 +655,15 @@ object Fiber extends FiberPlatformSpecific {
       case _    => false
     }
 
-    final def toFinishing: Status = self match {
-      case Done                            => Done
-      case Finishing(interrupting)         => Finishing(interrupting)
-      case Running(interrupting)           => Running(interrupting)
-      case Suspended(previous, _, _, _, _) => previous.toFinishing
-    }
-
     final def withInterrupting(b: Boolean): Status = self match {
       case Done                         => Done
-      case Finishing(_)                 => Finishing(b)
       case Running(_)                   => Running(b)
       case v @ Suspended(_, _, _, _, _) => v.copy(previous = v.previous.withInterrupting(b))
     }
   }
   object Status {
-    case object Done                                  extends Status
-    final case class Finishing(interrupting: Boolean) extends Status
-    final case class Running(interrupting: Boolean)   extends Status
+    case object Done                                extends Status
+    final case class Running(interrupting: Boolean) extends Status
     final case class Suspended(
       previous: Status,
       interruptible: Boolean,
