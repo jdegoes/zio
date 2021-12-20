@@ -670,4 +670,10 @@ object ZFiberRef {
 
   private[zio] val currentEnvironment: FiberRef.Runtime[ZEnvironment[Any]] =
     ZFiberRef.unsafeMake(ZEnvironment.empty, a => a, (a, _) => a)
+
+  private[zio] val suppressed: FiberRef[Cause[Nothing]] = 
+    FiberRef.unsafeMake[Cause[Nothing]](Cause.empty, identity(_), (o, _) => o)
+
+  private[zio] val interruptors: FiberRef[Set[FiberId]] = 
+    FiberRef.unsafeMake[Set[FiberId]](Set.empty[FiberId], identity(_), (o, _) => o)
 }
