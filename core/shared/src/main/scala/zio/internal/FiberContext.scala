@@ -706,6 +706,7 @@ private[zio] final class FiberContext[E, A](
     zio: IO[E, A],
     forkScope: Option[ZScope] = None
   )(implicit trace: ZTraceElement): FiberContext[E, A] = {
+    // TODO: Allow fork function in fiber refs to delete fiber ref
     val childFiberRefLocals: Map[FiberRef.Runtime[_], AnyRef] = fiberRefLocals.get.transform { case (fiberRef, value) =>
       fiberRef.fork(value.asInstanceOf[fiberRef.ValueType]).asInstanceOf[AnyRef]
     }
