@@ -563,49 +563,25 @@ object Fiber extends FiberPlatformSpecific {
     abstract class Internal[+E, +A] extends Synthetic[E, A]
   }
 
-  sealed abstract class Descriptor {
-    def id: FiberId
-    def status: Status
-    def interrupters: Set[FiberId]
-    def interruptStatus: InterruptStatus
-    def executor: Executor
-    def isLocked: Boolean
-    def scope: ZScope
-  }
+  final case class Descriptor(
+    id: FiberId,
+    status: Status,
+    interrupters: Set[FiberId],
+    interruptStatus: InterruptStatus,
+    executor: Executor,
+    isLocked: Boolean,
+    scope: ZScope
+  )
 
-  object Descriptor {
-
-    /**
-     * A record containing information about a [[Fiber]].
-     *
-     * @param id
-     *   The fiber's unique identifier
-     * @param interrupters
-     *   The set of fibers attempting to interrupt the fiber or its ancestors.
-     * @param executor
-     *   The [[Executor]] executing this fiber
-     * @param children
-     *   The fiber's forked children.
-     */
-    def apply(
-      id0: FiberId,
-      status0: Status,
-      interrupters0: Set[FiberId],
-      interruptStatus0: InterruptStatus,
-      executor0: Executor,
-      locked0: Boolean,
-      scope0: ZScope
-    ): Descriptor =
-      new Descriptor {
-        def id: FiberId                      = id0
-        def status: Status                   = status0
-        def interrupters: Set[FiberId]       = interrupters0
-        def interruptStatus: InterruptStatus = interruptStatus0
-        def executor: Executor               = executor0
-        def isLocked: Boolean                = locked0
-        def scope: ZScope                    = scope0
-      }
-  }
+  final case class Descriptor2(
+    id: FiberId,
+    status: Status2,
+    interrupters: Set[FiberId],
+    interruptStatus: InterruptStatus,
+    executor: Executor,
+    isLocked: Boolean,
+    scope: ZScope
+  )
 
   final case class Dump(fiberId: FiberId.Runtime, status: Status, trace: ZTrace) extends Product with Serializable {
     self =>
@@ -632,6 +608,15 @@ object Fiber extends FiberPlatformSpecific {
   type Id = FiberId
   @deprecated("use FiberId", "2.0.0")
   val Id = FiberId
+
+  final case class Suspension(blockingOn: FiberId, asyncTrace: ZTraceElement)
+
+  sealed trait Status2
+  object Status2 {
+    case object Done extends Status2
+    case class Running(interruptible: Boolean, interrupting: Boolean, asyncs: Int, suspension: Option[Suspension])
+        extends Status2
+  }
 
   sealed abstract class Status extends Serializable with Product { self =>
     import Status._

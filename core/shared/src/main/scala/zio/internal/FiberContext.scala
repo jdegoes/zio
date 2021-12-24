@@ -37,8 +37,7 @@ private[zio] final class FiberContext[E, A](
   var runtimeConfig: RuntimeConfig,
   val interruptStatus: StackBool,
   val fiberRefLocals: FiberRefLocals,
-  val _children: JavaSet[FiberContext[_, _]],
-  val location: ZTraceElement
+  val _children: JavaSet[FiberContext[_, _]]
 ) extends Fiber.Runtime.Internal[E, A]
     with FiberRunnable { self =>
   import FiberContext.{erase, eraseK, eraseR, Erased, ErasedCont, ErasedTracedCont}
@@ -109,6 +108,8 @@ private[zio] final class FiberContext[E, A](
   }
 
   final def interruptAs(fiberId: FiberId)(implicit trace: ZTraceElement): UIO[Exit[E, A]] = unsafeInterruptAs(fiberId)
+
+  final def location: ZTraceElement = fiberId.location
 
   final def poll(implicit trace: ZTraceElement): UIO[Option[Exit[E, A]]] = ZIO.succeed(unsafePoll)
 
@@ -713,7 +714,7 @@ private[zio] final class FiberContext[E, A](
 
     val parentScope = (forkScope orElse unsafeGetRef(forkScopeOverride)).getOrElse(scope)
 
-    val childId       = FiberId.unsafeMake()
+    val childId       = FiberId.unsafeMake(trace)
     val grandChildren = Platform.newWeakSet[FiberContext[_, _]]()
 
     val childContext = new FiberContext[E, A](
@@ -721,8 +722,7 @@ private[zio] final class FiberContext[E, A](
       runtimeConfig,
       StackBool(interruptStatus.peekOrElse(true)),
       new AtomicReference(childFiberRefLocals),
-      grandChildren,
-      trace
+      grandChildren
     )
 
     if (runtimeConfig.supervisor ne Supervisor.none) {

@@ -262,7 +262,7 @@ trait Runtime[+R] {
       case failure: ZIO.ZioError[_] =>
         val cause = failure.cause.asInstanceOf[Cause[E]]
 
-        val fiberId = cause.trace.fiberId.getOrElse(FiberId.unsafeMake())
+        val fiberId = cause.trace.fiberId.getOrElse(FiberId.unsafeMake(trace0))
 
         val trace = ZTrace(fiberId, stackTraceBuilder.value.result())
 
@@ -363,7 +363,7 @@ trait Runtime[+R] {
   private final def unsafeRunWith[E, A](
     zio: ZIO[R, E, A]
   )(k: Exit[E, A] => Any)(implicit trace: ZTraceElement): FiberId => (Exit[E, A] => Any) => Unit = {
-    val fiberId = FiberId.unsafeMake()
+    val fiberId = FiberId.unsafeMake(trace)
 
     val children = Platform.newWeakSet[FiberContext[_, _]]()
 
@@ -376,8 +376,7 @@ trait Runtime[+R] {
       new java.util.concurrent.atomic.AtomicReference(
         Map(ZFiberRef.currentEnvironment -> environment.asInstanceOf[AnyRef])
       ),
-      children,
-      trace
+      children
     )
 
     ZScope.global.unsafeAdd(runtimeConfig, context)
