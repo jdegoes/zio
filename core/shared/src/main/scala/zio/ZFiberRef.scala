@@ -672,13 +672,10 @@ object ZFiberRef {
     ZFiberRef.unsafeMake(ZEnvironment.empty, a => a, (a, _) => a)
 
   private[zio] val suppressed: FiberRef.Runtime[Cause[Nothing]] =
-    FiberRef.unsafeMake[Cause[Nothing]](Cause.empty, identity(_), (o, _) => o)
+    FiberRef.unsafeMake[Cause[Nothing]](Cause.empty, identity(_), _ && _)
 
   private[zio] val interruptors: FiberRef.Runtime[Set[FiberId]] =
-    FiberRef.unsafeMake[Set[FiberId]](Set.empty[FiberId], identity(_), (o, _) => o)
-
-  private[zio] val suspension: FiberRef.Runtime[Fiber.Suspension] =
-    FiberRef.unsafeMake(Fiber.Suspension(FiberId.None, ZTraceElement.empty), identity(_), (o, _) => o)
+    FiberRef.unsafeMake[Set[FiberId]](Set.empty[FiberId], identity(_), _ ++ _)
 
   private[zio] val exit: FiberRef.Runtime[Exit[Any, Any]] =
     FiberRef.unsafeMake[Exit[Any, Any]](Exit.empty, identity(_), (o, _) => o)
