@@ -638,7 +638,7 @@ private[zio] final class FiberContext[E, A](
    */
   private def unsafeDisableInterrupting(): Unit = interruptStatus.push(false)
 
-  // @tailrec
+  @tailrec
   private def unsafeEnterAsync(
     epoch: Int,
     register: AnyRef,
@@ -697,18 +697,18 @@ private[zio] final class FiberContext[E, A](
     }
   }
 
-  // @tailrec
+  @tailrec
   private def unsafeExitAsync(epoch: Long)(implicit trace: ZTraceElement): Boolean = {
     val oldState = state.get
 
     oldState match {
-      // case executing @ Executing(Status.Suspended(interrupting, _, oldEpoch, _, _), _, _, _, _, _)
-      //     if epoch == oldEpoch =>
-      //   val newState =
-      //     executing.copy(status = Status.Running(interrupting), asyncCanceler = CancelerState.Empty)
+      case executing @ Executing(status @ Status.Running(_, interrupting, oldEpoch, Some(_)), _, _, _, _, _)
+          if epoch == oldEpoch =>
+        val newState =
+          executing.copy(status = status.copy(suspension = None), asyncCanceler = CancelerState.Empty)
 
-      //   if (!state.compareAndSet(oldState, newState)) unsafeExitAsync(epoch)
-      //   else true
+        if (!state.compareAndSet(oldState, newState)) unsafeExitAsync(epoch)
+        else true
 
       case _ => false
     }
@@ -989,35 +989,35 @@ private[zio] final class FiberContext[E, A](
     else unsafeGetExecutor().unsafeSubmitOrThrow(this)
   }
 
-  // @tailrec
+  @tailrec
   private def unsafeSetAsyncCanceler(epoch: Long, asyncCanceler0: ZIO[Any, Any, Any]): Unit = {
     val oldState      = state.get
     val asyncCanceler = if (asyncCanceler0 eq null) ZIO.unit else asyncCanceler0
 
     oldState match {
-      // case executing @ Executing(
-      //       status @ Status.Suspended(_, _, oldEpoch, _, _),
-      //       _,
-      //       _,
-      //       _,
-      //       CancelerState.Pending,
-      //       _
-      //     ) if epoch == oldEpoch =>
-      //   val newState = executing.copy(status = status, asyncCanceler = CancelerState.Registered(asyncCanceler))
+      case executing @ Executing(
+            status @ Status.Running(_, _, oldEpoch, Some(_)),
+            _,
+            _,
+            _,
+            CancelerState.Pending,
+            _
+          ) if epoch == oldEpoch =>
+        val newState = executing.copy(status = status, asyncCanceler = CancelerState.Registered(asyncCanceler))
 
-      //   if (!state.compareAndSet(oldState, newState)) unsafeSetAsyncCanceler(epoch, asyncCanceler)
+        if (!state.compareAndSet(oldState, newState)) unsafeSetAsyncCanceler(epoch, asyncCanceler)
 
       case Executing(_, _, _, _, CancelerState.Empty, _) =>
 
-      // case Executing(
-      //       Status.Suspended(_, _, oldEpoch, _, _),
-      //       _,
-      //       _,
-      //       _,
-      //       CancelerState.Registered(_),
-      //       _
-      //     ) if epoch == oldEpoch =>
-      //   throw new Exception("inconsistent state in unsafeSetAsyncCanceler")
+      case Executing(
+            Status.Running(_, _, oldEpoch, Some(_)),
+            _,
+            _,
+            _,
+            CancelerState.Registered(_),
+            _
+          ) if epoch == oldEpoch =>
+        throw new Exception("inconsistent state in unsafeSetAsyncCanceler")
 
       case _ =>
     }
