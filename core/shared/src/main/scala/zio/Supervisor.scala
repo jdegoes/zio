@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,7 +122,7 @@ object Supervisor {
   def fibersIn(
     ref: AtomicReference[SortedSet[Fiber.Runtime[Any, Any]]]
   )(implicit trace: ZTraceElement): UIO[Supervisor[SortedSet[Fiber.Runtime[Any, Any]]]] =
-    UIO {
+    ZIO.succeed {
 
       new Supervisor[SortedSet[Fiber.Runtime[Any, Any]]] {
         def value(implicit trace: ZTraceElement): UIO[SortedSet[Fiber.Runtime[Any, Any]]] =

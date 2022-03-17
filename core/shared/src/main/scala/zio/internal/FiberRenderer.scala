@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@
 package zio.internal
 
 import zio.Fiber.Dump
-import zio.Fiber.Status.{Done, Running, Suspended}
+import zio.Fiber.Status.{Done, Running}
 import zio.{Fiber, FiberId, UIO, ZIO, ZTraceElement}
 import zio.internal.stacktracer.Tracer
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 private[zio] object FiberRenderer {
   def prettyPrint(dump: Fiber.Dump)(implicit trace: ZTraceElement): UIO[String] =
-    UIO(unsafePrettyPrint(dump, System.currentTimeMillis()))
+    ZIO.succeed(unsafePrettyPrint(dump, System.currentTimeMillis()))
 
   private def unsafePrettyPrint(dump: Fiber.Dump, now: Long): String = {
     val millis  = (now - dump.fiberId.startTimeSeconds * 1000).toLong
@@ -38,8 +38,8 @@ private[zio] object FiberRenderer {
       (if (hours == 0 && minutes == 0 && seconds == 0) "" else s"${seconds}s") +
       (s"${millis}ms")
     val waitMsg = dump.status match {
-      case Suspended(_, _, _, blockingOn, _) =>
-        if (blockingOn ne FiberId.None) "waiting on " + s"#${blockingOn.ids.mkString(", ")}" else ""
+      // case Suspended(_, _, _, blockingOn, _) =>
+      //   if (blockingOn ne FiberId.None) "waiting on " + s"#${blockingOn.ids.mkString(", ")}" else ""
       case _ => ""
     }
     val statMsg = renderStatus(dump.status)
@@ -53,13 +53,14 @@ private[zio] object FiberRenderer {
 
   private def renderStatus(status: Fiber.Status): String =
     status match {
-      case Done       => "Done"
-      case Running(b) => "Running(" + (if (b) "interrupting" else "") + ")"
-      case Suspended(_, interruptible, epoch, _, asyncTrace) =>
-        val in = if (interruptible) "interruptible" else "uninterruptible"
-        val ep = s"$epoch asyncs"
-        val as = asyncTrace.toString
-        s"Suspended($in, $ep, $as)"
+      case Done => "Done"
+      case _    => ???
+      // case Running(b) => "Running(" + (if (b) "interrupting" else "") + ")"
+      // case Suspended(_, interruptible, epoch, _, asyncTrace) =>
+      //   val in = if (interruptible) "interruptible" else "uninterruptible"
+      //   val ep = s"$epoch asyncs"
+      //   val as = asyncTrace.toString
+      //   s"Suspended($in, $ep, $as)"
     }
 
 }

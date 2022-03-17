@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,10 @@
 
 package zio.test.magnolia
 
-import java.time.{Instant, LocalDate, LocalDateTime}
-import java.util.UUID
+import zio.Chunk
 
+import java.time.{Instant, LocalDate, LocalDateTime, LocalTime}
+import java.util.UUID
 import scala.compiletime.{erasedValue, summonInline}
 import scala.deriving._
 import zio._
@@ -50,9 +51,10 @@ object DeriveGen {
     given DeriveGen[UUID] = instance(Gen.uuid)
     given DeriveGen[Instant] = instance(Gen.instant)
     given DeriveGen[LocalDateTime] = instance(Gen.localDateTime)
-    given DeriveGen[LocalDate] = instance(Gen.localDateTime.map(_.toLocalDate()))
+    given DeriveGen[LocalDate] = instance(Gen.localDate)
+    given DeriveGen[LocalTime] = instance(Gen.localTime)
     given DeriveGen[BigDecimal] = instance(Gen.bigDecimal(
-        BigDecimal(Double.MinValue) * BigDecimal(Double.MaxValue), 
+        BigDecimal(Double.MinValue) * BigDecimal(Double.MaxValue),
         BigDecimal(Double.MaxValue) * BigDecimal(Double.MaxValue)
     ))
 
@@ -64,6 +66,8 @@ object DeriveGen {
         instance(Gen.oneOf(Gen.listOf(a.derive), Gen.vectorOf(a.derive), Gen.setOf(a.derive)))
     given [A] (using a: DeriveGen[A]): DeriveGen[List[A]] =
         instance(Gen.listOf(a.derive))
+    given [A] (using a: DeriveGen[A]): DeriveGen[Chunk[A]] =
+        instance(Gen.chunkOf(a.derive))
     given [A, B] (using a: DeriveGen[A], b: DeriveGen[B]): DeriveGen[Map[A, B]] =
         instance(Gen.mapOf(a.derive, b.derive))
     given [A] (using a: => DeriveGen[A]): DeriveGen[Option[A]] =

@@ -38,9 +38,10 @@ module.exports = {
     ],
     "Contextual Types": [
         "datatypes/contextual/index",
+        "datatypes/contextual/zenvironment",
         {
             type: "category",
-            label: "ZIO Dependencies",
+            label: "ZIO Layers",
             items: [
                 "datatypes/contextual/zlayer",
                 "datatypes/contextual/rlayer",
@@ -199,25 +200,6 @@ module.exports = {
             "datatypes/test/environment/sized",
           ]
         },
-        {
-          type: "category",
-          label: "Mock Services",
-          items: [
-            "datatypes/test/mock/index",
-            "datatypes/test/mock/mock",
-            "datatypes/test/mock/expectation",
-            {
-              type: "category",
-              label: "Built-in Mock Services",
-              items: [
-                "datatypes/test/mock/console",
-                "datatypes/test/mock/clock",
-                "datatypes/test/mock/random",
-                "datatypes/test/mock/system",
-              ]
-            }
-          ]
-        },
         "datatypes/test/test-aspect",
         "datatypes/test/gen",
       ],
@@ -245,8 +227,6 @@ module.exports = {
     "Overview": ["howto/index"],
     "How to": [
       "howto/handle-errors",
-      "howto/access-system-information",
-      "howto/use-zio-macros"
     ],
     "Interop": [
       "howto/interop/with-cats-effect",
@@ -284,6 +264,7 @@ module.exports = {
                 "resources/ecosystem/officials/index",
                 "resources/ecosystem/officials/zio-actors",
                 "resources/ecosystem/officials/zio-akka-cluster",
+                "resources/ecosystem/officials/zio-aws",
                 "resources/ecosystem/officials/zio-cache",
                 "resources/ecosystem/officials/zio-config",
                 "resources/ecosystem/officials/zio-ftp",
@@ -320,7 +301,6 @@ module.exports = {
                 "resources/ecosystem/community/tranzactio",
                 "resources/ecosystem/community/zio-amqp",
                 "resources/ecosystem/community/zio-arrow",
-                "resources/ecosystem/community/zio-aws",
                 "resources/ecosystem/community/zio-aws-s3",
                 "resources/ecosystem/community/zio-grpc",
                 "resources/ecosystem/community/zio-http",
@@ -340,10 +320,12 @@ module.exports = {
   "about-sidebar": {
     "About": [
       "about/index",
+      "about/faq",
       "about/coding-guidelines",
       "about/contributing",
       "about/contributing-to-documentation",
-      "about/code-of-conduct"
+      "about/code-of-conduct",
+      "about/users",
     ]
   }
 }

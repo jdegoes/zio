@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,5 +25,5 @@ final case class ZIOAppArgs(getArgs: Chunk[String])
 object ZIOAppArgs {
 
   def getArgs(implicit trace: ZTraceElement): ZIO[ZIOAppArgs, Nothing, Chunk[String]] =
-    ZIO.service[ZIOAppArgs].map(_.getArgs)
+    ZIO.serviceWith(_.getArgs)
 }

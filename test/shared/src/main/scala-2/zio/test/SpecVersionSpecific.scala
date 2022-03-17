@@ -1,6 +1,6 @@
 package zio.test
 
-import zio.{NeedsEnv, ZLayer}
+import zio.ZLayer
 import zio.internal.macros.LayerMacros
 
 private[test] trait SpecVersionSpecific[-R, +E, +T] { self: Spec[R, E, T] =>
@@ -30,7 +30,7 @@ private[test] trait SpecVersionSpecific[-R, +E, +T] { self: Spec[R, E, T] =>
    * }}}
    */
   def provideCustom[E1 >: E](layer: ZLayer[_, E1, _]*): Spec[TestEnvironment, E1, T] =
-    macro LayerMacros.provideSomeImpl[Spec, TestEnvironment, R, E1, T]
+    macro LayerMacros.provideCustomImpl[Spec, TestEnvironment, R, E1, T]
 
   /**
    * Splits the environment into two parts, providing each test with one part
@@ -95,7 +95,7 @@ private final class provideSomePartiallyApplied[R0, -R, +E, +T](val self: Spec[R
 
   def provideLayer[E1 >: E](
     layer: ZLayer[R0, E1, R]
-  )(implicit ev: NeedsEnv[R]): Spec[R0, E1, T] =
+  ): Spec[R0, E1, T] =
     self.provideLayer(layer)
 
   def apply[E1 >: E](layer: ZLayer[_, E1, _]*): Spec[R0, E1, T] =
@@ -106,7 +106,7 @@ private final class provideSomeSharedPartiallyApplied[R0, -R, +E, +T](val self: 
 
   def provideLayerShared[E1 >: E](
     layer: ZLayer[R0, E1, R]
-  )(implicit ev: NeedsEnv[R]): Spec[R0, E1, T] =
+  ): Spec[R0, E1, T] =
     self.provideLayerShared(layer)
 
   def apply[E1 >: E](layer: ZLayer[_, E1, _]*): Spec[R0, E1, T] =

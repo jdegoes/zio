@@ -23,7 +23,11 @@ What about functional effects? Can we assert two effects using ordinary scala as
 
 Let's say we have a random generator effect, and we want to ensure that the output is bigger than zero, so we should `unsafeRun` the effect and assert the result:
 
-```scala mcoc:compile-only
+```scala mdoc:invisible
+import zio._
+```
+
+```scala mdoc:compile-only
 import scala.Predef.assert
 
 val random = Runtime.default.unsafeRun(
@@ -138,7 +142,7 @@ The `TestRandom` service has some extra functionality that enables us to test th
 
 Each of these services, comes with a bunch of functionality that makes it very easy to test effects.
 
-Whenever we need to access the _live_ environment, we can use the `live` method in the `mock` package or specify the live environment in the type signature like `Live[Console]`.
+Whenever we need to access the _live_ environment, we can use the `live` method in the `test` package or specify the live environment in the type signature like `Live[Console]`.
 
 ### Resource Management
 
@@ -152,14 +156,14 @@ import zio.test.{test, _}
 import zio.test.Assertion._
 
 val kafkaLayer: ZLayer[Any, Nothing, Int] = ZLayer.succeed(1)
-val test1 = test("kafkatest")(assertTrue(true))
-val test2 = test("kafkatest")(assertTrue(true))
-val test3 = test("kafkatest")(assertTrue(true))
+val test1: ZSpec[Int, Nothing] = test("kafkatest")(assertTrue(true))
+val test2: ZSpec[Int, Nothing] = test("kafkatest")(assertTrue(true))
+val test3: ZSpec[Int, Nothing] = test("kafkatest")(assertTrue(true))
 ```
 
 ```scala mdoc:compile-only
 suite("a test suite with shared kafka layer")(test1, test2, test3)
-  .provideCustomShared(kafkaLayer)
+  .provideCustomLayerShared(kafkaLayer)
 ```
 
 This layer going to get acquired once, then we have access to that service within all these three tests within the suite and then it is guaranteed to be released at the end of our tests.
@@ -175,6 +179,7 @@ Support for property based testing is included out-of-the-box through the `check
 
 ```scala mdoc:compile-only
 import zio.test._
+
 val associativity =
   check(Gen.int, Gen.int, Gen.int) { (x, y, z) =>
     assertTrue(((x + y) + z) == (x + (y + z)))
@@ -187,7 +192,7 @@ ZIO Test also supports automatic derivation of generators using the ZIO Test Mag
 
 ```scala mdoc:compile-only
 import zio._
-import zio.Random
+import zio.test._
 import zio.test.magnolia._
 
 case class Point(x: Double, y: Double)

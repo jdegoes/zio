@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,13 @@ package zio.metrics
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 /**
- * A `MetricListener` is capable of taking some action in response to a metric
- * being recorded, such as sending that metric to a third party service.
+ * A [[MetricListener]] is capable of taking some action in response to a metric
+ * being recorded, such as sending that metric to a third-party service.
  */
-trait MetricListener { self =>
-  def unsafeGaugeObserved(key: MetricKey.Gauge, value: Double, delta: Double): Unit
-  def unsafeCounterObserved(key: MetricKey.Counter, absValue: Double, delta: Double): Unit
-  def unsafeHistogramObserved(key: MetricKey.Histogram, value: Double): Unit
-  def unsafeSummaryObserved(key: MetricKey.Summary, value: Double): Unit
-  def unsafeSetObserved(key: MetricKey.SetCount, word: String): Unit
+private[zio] trait MetricListener { self =>
+  def unsafeUpdate[Type <: MetricKeyType](key: MetricKey[Type]): key.keyType.In => Unit
+
+  // TODO: Implement caching
+  final def unsafeUpdateCached[Type <: MetricKeyType](key: MetricKey[Type]): key.keyType.In => Unit =
+    unsafeUpdate(key)
 }

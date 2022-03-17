@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -514,7 +514,7 @@ object ZQueue {
           .unit
       }.uninterruptible
 
-    def isShutdown(implicit trace: ZTraceElement): UIO[Boolean] = UIO(shutdownFlag.get)
+    def isShutdown(implicit trace: ZTraceElement): UIO[Boolean] = ZIO.succeed(shutdownFlag.get)
 
     def take(implicit trace: ZTraceElement): UIO[A] =
       UIO.suspendSucceedWith { (_, fiberId) =>

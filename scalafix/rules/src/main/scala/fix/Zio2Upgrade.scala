@@ -9,6 +9,8 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
 
   val renames =
     Map(
+      "access"          -> "environment",
+      "accessManaged"          -> "environmentWithManaged",
       "accessM"                -> "environmentWithZIO",
       "accessZIO"              -> "environmentWithZIO",
       "asEC"                   -> "asExecutionContext",
@@ -73,6 +75,7 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
       "paginateM"              -> "paginateZIO",
       "partitionPar_"          -> "partitionParDiscard",
       "partition_"             -> "partitionDiscard",
+      "provide"                -> "provideService",
       "rejectM"                -> "rejectZIO",
       "repeatEffect"           -> "repeatZIO",
       "repeatEffectChunk"      -> "repeatZIOChunk",
@@ -100,10 +103,12 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
       "validate_"              -> "validateDiscard",
       "whenCaseM"              -> "whenCaseZIO",
       "whenM"                  -> "whenZIO",
+      "serviceWith"               -> "serviceWithZIO"
     )
 
   lazy val scopes = List(
     "zio.test.package",
+    "zio.test.Gen",
     "zio.test.DefaultRunnableSpec",
     "zio.Exit",
     "zio.ZIO",
@@ -186,8 +191,8 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
       "collectAll_"   -> "collectAllDiscard",
       "foldM"         -> "foldSTM",
       "foreach_"      -> "foreachDiscard",
-      "fromFunction"  -> "access",
-      "fromFunctionM" -> "accessSTM",
+      "fromFunction"  -> "environmentWith", // TODO Check STM specifics
+      "fromFunctionM" -> "environmentWithSTM", // TODO Check STM specifics
       "ifM"           -> "ifSTM",
       "loop_"         -> "loopDiscard",
       "partial"       -> "attempt",
@@ -203,7 +208,7 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
   val StreamRenames = Renames(
     List("zio.stream.ZStream"),
     Map(
-      "access" -> "environment",
+      "access" -> "environmentWith",
       "accessM" -> "environmentWithZIO",
       "accessZIO" -> "environmentWithZIO", // RC only
       "dropWhileM" -> "dropWhileZIO", // RC only, cannot test
@@ -302,8 +307,8 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
       "foldCauseM"                -> "foldCauseManaged",
       "foldM"                     -> "foldManaged",
       "fromEffectUninterruptible" -> "fromZIOUninterruptible",
-      "fromFunction"              -> "access",
-      "fromFunctionM"             -> "accessManaged",
+      "fromFunction"              -> "environmentWith",
+      "fromFunctionM"             -> "environmentWithManaged",
       "ifM"                       -> "ifManaged",
       "make"                      -> "acquireReleaseWith",
       "makeEffect"                -> "acquireReleaseAttemptWith",
@@ -319,7 +324,7 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
       "someOrElseM"               -> "someOrElseManaged",
       "unlessM"                   -> "unlessManaged",
       "whenCaseM"                 -> "whenCaseManaged",
-      "whenM"                     -> "whenManaged"
+      "whenM"                     -> "whenManaged",
     )
   )
 
@@ -400,6 +405,7 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
     "zio.test.Gen.anyUpperHexChar"            -> "zio.test.Gen.hexCharUpper",
     "zio.test.Gen.anyASCIIString"             -> "zio.test.Gen.asciiString",
     "zio.test.Gen.anyUUID"                    -> "zio.test.Gen.uuid",
+    "zio.test.Gen.anyInstant"                 -> "zio.test.Gen.instant",
     "zio.test.TimeVariants.anyDayOfWeek"      -> "zio.test.Gen.dayOfWeek",
     "zio.test.TimeVariants.anyFiniteDuration" -> "zio.test.Gen.finiteDuration",
     "zio.test.TimeVariants.anyLocalDate"      -> "zio.test.Gen.localDate",
@@ -431,7 +437,21 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
   object BuiltInServiceFixer { // TODO Handle all built-in services?
 
     object ImporteeRenamer {
-      def importeeRenames(implicit sdoc: SemanticDocument): PartialFunction[Tree, Option[Patch]] =
+        
+      def importeeRenames(implicit sdoc: SemanticDocument): PartialFunction[Tree, Option[Patch]] = {
+        val pf: SymbolMatcher => PartialFunction[Tree, Patch] =
+          (symbolMatcher: SymbolMatcher) => {
+            case t @ ImporteeNameOrRename(symbolMatcher(_)) =>
+              Patch.removeImportee(t)
+          }
+
+        val pf1:PartialFunction[Tree, Option[Patch]] = { case (_: Tree) => None }
+        val pf2: Function2[PartialFunction[Tree, Option[Patch]], PartialFunction[Tree, Patch], PartialFunction[Tree, Option[Patch]]] = {
+          case (totalPatch, nextPatch) => {
+            case (tree: Tree) => nextPatch.lift(tree).orElse(totalPatch(tree))
+          }
+        }
+
         List(
           randomMigrator,
           systemMigrator,
@@ -448,11 +468,8 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
           testLiveMigrator
         ).foldLeft(List[SymbolMatcher](hasNormalized)) { case (serviceMatchers, serviceMigrator) =>
           serviceMatchers ++ List(serviceMigrator.normalizedOld, serviceMigrator.normalizedOldService)
-        }.map[PartialFunction[Tree, Patch]](symbolMatcher => { case t @ ImporteeNameOrRename(symbolMatcher(_)) =>
-          Patch.removeImportee(t)
-        }).foldLeft[PartialFunction[Tree, Option[Patch]]] { case (_: Tree) => None } { case (totalPatch, nextPatch) =>
-          (tree: Tree) => nextPatch.lift(tree).orElse(totalPatch(tree))
-        }
+        }.map(pf).foldLeft {pf1} {pf2}
+      }
 
       def unapply(tree: Tree)(implicit sdoc: SemanticDocument): Option[Patch] =
         importeeRenames.apply(tree)
@@ -648,7 +665,6 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
         Patch.replaceTree(t, "FiberId") +
           Patch.addGlobalImport(Symbol("zio/FiberId#"))
 
-      // TODO Safe to do for many similar types?
       case t @ q"import zio.duration.Duration" =>
         Patch.replaceTree(t, "import zio.Duration")
 
@@ -677,6 +693,30 @@ class Zio2Upgrade extends SemanticRule("Zio2Upgrade") {
 
     }.asPatch + replaceSymbols
   }
+
+  /*
+     Since this is now just a simple rename, I'm keeping this around a bit longer
+     to reference for future migrations.
+
+      Transforms
+        ZIO(foo).provide(bar)
+      into
+        ZIO(foo).provideEnvironment(ZEnvironment(bar))
+   */
+  def fixProvides(implicit doc: SemanticDocument): Patch =
+    doc.tree.collect {
+      case Term.Apply(
+          Term.Select(
+            // TODO Keep an eye out for more Term types that `a` might be
+            a @ (Term.ApplyType(_, _) | Term.Select(_, _) | Term.Apply(_, _)) ,
+            p @ Term.Name("provide")
+          ),
+          List(args)
+        ) if a.symbol.owner.value.startsWith("zio") =>
+        Patch.addGlobalImport(Symbol("zio/ZEnvironment#")) +
+          Patch.replaceTree(p, "provideEnvironment") +
+          Patch.replaceTree(args, s"ZEnvironment($args)")
+    }.asPatch
 
   private def wildcardImport(ref: Term.Ref): Importer =
     Importer(ref, List(Importee.Wildcard()))

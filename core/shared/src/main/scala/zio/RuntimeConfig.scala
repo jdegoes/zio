@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,24 +28,24 @@ final case class RuntimeConfig(
   fatal: Throwable => Boolean,
   reportFatal: Throwable => Nothing,
   supervisor: Supervisor[Any],
-  loggers: ZLogger.Set[String & Cause[Any], Any],
+  logger: ZLogger[String, Any],
   flags: RuntimeConfigFlags
 ) { self =>
   def @@(aspect: RuntimeConfigAspect): RuntimeConfig = aspect(self)
 
-  @deprecated("2.0.0", "Use RuntimeConfig#copy instead")
+  @deprecated("Use RuntimeConfig#copy instead", "2.0.0")
   def withBlockingExecutor(e: Executor): RuntimeConfig = copy(blockingExecutor = e)
 
-  @deprecated("2.0.0", "Use RuntimeConfig#copy instead")
+  @deprecated("Use RuntimeConfig#copy instead", "2.0.0")
   def withExecutor(e: Executor): RuntimeConfig = copy(executor = e)
 
-  @deprecated("2.0.0", "Use RuntimeConfig#copy instead")
+  @deprecated("Use RuntimeConfig#copy instead", "2.0.0")
   def withFatal(f: Throwable => Boolean): RuntimeConfig = copy(fatal = f)
 
-  @deprecated("2.0.0", "Use RuntimeConfig#copy instead")
+  @deprecated("Use RuntimeConfig#copy instead", "2.0.0")
   def withReportFatal(f: Throwable => Nothing): RuntimeConfig = copy(reportFatal = f)
 
-  @deprecated("2.0.0", "Use RuntimeConfig#copy instead")
+  @deprecated("Use RuntimeConfig#copy instead", "2.0.0")
   def withSupervisor(s0: Supervisor[Any]): RuntimeConfig = copy(supervisor = s0)
 }
 

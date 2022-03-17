@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -656,8 +656,8 @@ object TestAspect extends TimeoutVariants {
    * to its starting state after the test is run. Note that this is only useful
    * when repeating tests.
    */
-  def restore[R0 <: Restorable](implicit tag: Tag[R0], ev: IsNotIntersection[R0]): TestAspectAtLeastR[R0] =
-    aroundWith(ZIO.serviceWithZIO[R0](_.save(ZTraceElement.empty))(Tag[R0], ZTraceElement.empty))(restore => restore)
+  def restore[R0 <: Restorable](implicit tag: Tag[R0]): TestAspectAtLeastR[R0] =
+    aroundWith(ZIO.serviceWithZIO[R0](_.save(ZTraceElement.empty))(tag, ZTraceElement.empty))(restore => restore)
 
   /**
    * An aspect that restores the [[zio.test.TestClock TestClock]]'s state to its
@@ -926,8 +926,9 @@ object TestAspect extends TimeoutVariants {
       def perTest[R <: Live with Annotations, E](
         test: ZIO[R, TestFailure[E], TestSuccess]
       )(implicit trace: ZTraceElement): ZIO[R, TestFailure[E], TestSuccess] =
-        Live.withLive(test)(_.either.timed).flatMap { case (duration, result) =>
-          ZIO.fromEither(result).ensuring(Annotations.annotate(TestAnnotation.timing, duration))
+        Live.withLive(test)(_.either.summarized(Clock.instant)(TestDuration.fromInterval)).flatMap {
+          case (duration, result) =>
+            ZIO.fromEither(result).ensuring(Annotations.annotate(TestAnnotation.timing, duration))
         }
     }
 
@@ -973,6 +974,15 @@ object TestAspect extends TimeoutVariants {
    * Runs only on Windows operating systems.
    */
   val windows: TestAspectAtLeastR[Annotations] = os(_.isWindows)
+
+  /**
+   * An aspect that runs tests with the live environment.
+   */
+  val withLiveEnvironment: TestAspectAtLeastR[Live] =
+    new TestAspectAtLeastR[Live] {
+      def some[R <: Live, E](spec: ZSpec[R, E])(implicit trace: ZTraceElement): ZSpec[R, E] =
+        spec.provideSomeLayer[R](ZLayer.fromZIOEnvironment(Live.live(ZIO.environment)))
+    }
 
   abstract class PerTest[+LowerR, -UpperR, +LowerE, -UpperE] extends TestAspect[LowerR, UpperR, LowerE, UpperE] {
 

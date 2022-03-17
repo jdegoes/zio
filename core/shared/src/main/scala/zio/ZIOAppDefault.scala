@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ trait ZIOAppDefault extends ZIOApp {
 
   val layer: ZLayer[ZIOAppArgs, Any, ZEnv] = ZEnv.live
 
-  val tag: Tag[ZEnv] = Tag[ZEnv]
+  val tag: EnvironmentTag[ZEnv] = EnvironmentTag[ZEnv]
 
 }
 

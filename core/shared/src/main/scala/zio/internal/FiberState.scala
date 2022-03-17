@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 sealed abstract class FiberState[+E, +A] extends Serializable with Product {
   def suppressed: Cause[Nothing]
   def status: Fiber.Status
-  def isInterrupting: Boolean = status.isInterrupting
+  def isInterrupting: Boolean = ??? //status.isInterrupting
   def interruptors: Set[FiberId]
   def interruptorsCause: Cause[Nothing] =
     interruptors.foldLeft[Cause[Nothing]](Cause.empty) { case (acc, interruptor) =>
@@ -57,14 +57,15 @@ object FiberState extends Serializable {
   }
 
   def initial[E, A]: Executing[E, A] =
-    Executing[E, A](
-      Status.Running(false),
-      Nil,
-      Cause.empty,
-      Set.empty[FiberId],
-      CancelerState.Empty,
-      null.asInstanceOf[UIO[Any]]
-    )
+    ???
+  // Executing[E, A](
+  //   Status.Running(false),
+  //   Nil,
+  //   Cause.empty,
+  //   Set.empty[FiberId],
+  //   CancelerState.Empty,
+  //   null.asInstanceOf[UIO[Any]]
+  // )
 }
 
 object successor {
@@ -205,7 +206,7 @@ object successor {
         { k =>
           val observer = (x: Exit[Nothing, Exit[E, A]]) => k(ZIO.done(x))
 
-          if (unsafeEvalOn(UIO(unsafeAddObserver(observer)))) {
+          if (unsafeEvalOn(ZIO.succeed(unsafeAddObserver(observer)))) {
             Left(evalOn(ZIO.succeed(unsafeRemoveObserver(observer)), ZIO.unit))
           } else {
             Right(ZIO.succeedNow(unsafeGetDone()))
@@ -216,7 +217,7 @@ object successor {
 
     final def children(implicit trace: ZTraceElement): UIO[Chunk[Fiber.Runtime[_, _]]] =
       evalOnZIO(
-        UIO {
+        ZIO.succeed {
           val chunkBuilder = ChunkBuilder.make[Fiber.Runtime[_, _]](_children.size)
 
           val iterator = _children.iterator()
@@ -227,7 +228,7 @@ object successor {
 
           chunkBuilder.result()
         },
-        UIO(Chunk.empty)
+        ZIO.succeed(Chunk.empty)
       )
 
     private final def childSet: JavaSet[FiberContext[_, _]] = {
@@ -268,7 +269,7 @@ object successor {
     }
 
     final def getRef[A](ref: FiberRef.Runtime[A])(implicit trace: ZTraceElement): UIO[A] =
-      evalZIO(UIO(unsafeGetRefOrInitial(ref)))
+      evalZIO(ZIO.succeed(unsafeGetRefOrInitial(ref)))
 
     final def id: FiberId.Runtime = fiberId
 
@@ -297,7 +298,7 @@ object successor {
     final def location: ZTraceElement = fiberId.location
 
     final def poll(implicit trace: ZTraceElement): UIO[Option[Exit[E, A]]] =
-      UIO(unsafePoll())
+      ZIO.succeed(unsafePoll())
 
     final def run(nextEffect: ZIO[_, _, _]): Unit =
       runUntil(nextEffect, unsafeGetExecutor().yieldOpCount)
@@ -316,11 +317,11 @@ object successor {
 
     final def scope: ZScope = ??? // TODO: ZScope.unsafeMake(self)
 
-    final def status(implicit trace: ZTraceElement): UIO[Fiber.Status2] =
-      evalOnZIO(UIO(unsafeGetStatus()), UIO(Fiber.Status2.Done))
+    final def status(implicit trace: ZTraceElement): UIO[Fiber.Status] =
+      evalOnZIO(ZIO.succeed(unsafeGetStatus()), ZIO.succeed(Fiber.Status.Done))
 
     final def trace(implicit trace0: ZTraceElement): UIO[ZTrace] =
-      UIO(unsafeCaptureTrace(Nil))
+      ZIO.succeed(unsafeCaptureTrace(Nil))
 
     final def unsafeAddInterruptor(fiberId: FiberId): Unit =
       unsafeSetRef(FiberRef.interruptors, unsafeGetInterruptors() + fiberId)
@@ -330,7 +331,7 @@ object successor {
 
     // TODO: Rename due to async nature of this method
     final def unsafeAddObserverMaybe(k: Exit[Nothing, Exit[E, A]] => Unit): Exit[E, A] =
-      if (unsafeEvalOn(UIO(unsafeAddObserver(k))(ZTraceElement.empty))) null.asInstanceOf[Exit[E, A]]
+      if (unsafeEvalOn(ZIO.succeed(unsafeAddObserver(k))(ZTraceElement.empty))) null.asInstanceOf[Exit[E, A]]
       else unsafeGetDone()
 
     final def unsafeAddSuppressed(cause: Cause[Nothing]): Unit =
@@ -387,8 +388,8 @@ object successor {
     final def unsafeGetCurrentExecutor(): Option[Executor] =
       unsafeGetRefOrElse(FiberRef.currentExecutor, None)
 
-    private def unsafeGetDescriptor(implicit trace: ZTraceElement): Fiber.Descriptor2 =
-      Fiber.Descriptor2(
+    private def unsafeGetDescriptor(implicit trace: ZTraceElement): Fiber.Descriptor =
+      Fiber.Descriptor(
         fiberId,
         unsafeGetStatus(),
         unsafeGetInterruptors(),
@@ -432,10 +433,10 @@ object successor {
       if (fiberRefs.containsKey(ref)) fiberRefs.get(ref).asInstanceOf[A]
       else orElse
 
-    final def unsafeGetStatus(): Fiber.Status2 =
-      if (unsafeIsDone()) Fiber.Status2.Done
+    final def unsafeGetStatus(): Fiber.Status =
+      if (unsafeIsDone()) Fiber.Status.Done
       else
-        Fiber.Status2.Running(
+        Fiber.Status.Running(
           unsafeIsInterruptible(),
           unsafeIsInterrupting(),
           unsafeGetAsyncs(),
@@ -460,7 +461,7 @@ object successor {
       val spans    = unsafeGetRefOrInitial(FiberRef.currentLogSpan)
 
       unsafeLogForEach(tag) { logger =>
-        logger(trace, fiberId, logLevel, message, ???, spans, location) // FIXME
+        logger(trace, fiberId, logLevel, message, ???, ???, spans, ???) // FIXME
       }
     }
 
@@ -488,14 +489,14 @@ object successor {
         } else ??? // FIXME
 
       unsafeLogForEach(tag) { logger =>
-        logger(trace, fiberId, logLevel, message, contextMap, spans, location)
+        logger(trace, fiberId, logLevel, message, ???, contextMap, spans, ???) // FIXME
       }
     }
 
     final def unsafeLogForEach(tag: LightTypeTag)(f: ZLogger[Any, Any] => Unit): Unit = {
-      val loggers = runtimeConfig.loggers.getAllDynamic(tag)
+      val logger = runtimeConfig.logger
 
-      loggers.foreach(logger => f(logger.asInstanceOf[ZLogger[Any, Any]]))
+      f(logger.asInstanceOf[ZLogger[Any, Any]])
     }
 
     final def unsafePoll(): Option[Exit[E, A]] =

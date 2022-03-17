@@ -7,16 +7,25 @@ import zio.test._
 import scala.io.Source
 
 object ZPipelineSpec extends ZIOBaseSpec {
-
   def spec =
     suite("ZPipelineSpec")(
+      suite("utf8Encode")(
+        test("encode chunks") {
+          ZStream
+            .fromChunks(Chunk.single("1"), Chunk.single("2"))
+            .via(ZPipeline.utf8Encode)
+            .runCollect
+            .map(res => assert(res)(equalTo(Chunk[Byte](49, 50))))
+        }
+      ),
       suite("splitLines")(
         test("preserves data")(
           check(weirdStringGenForSplitLines) { lines =>
             val data = lines.mkString("\n")
 
-            ZPipeline
-              .splitLines(ZStream.fromChunk(Chunk(data)))
+            ZStream
+              .fromChunk(Chunk(data))
+              .via(ZPipeline.splitLines)
               .runCollect
               .map(res => assert(res.mkString("\n"))(equalTo(data)))
           }
@@ -44,6 +53,11 @@ object ZPipelineSpec extends ZIOBaseSpec {
         },
         test("\\r\\n on the boundary") {
           testSplitLines(Seq(Chunk("abc\r", "\nabc")))
+        },
+        test("issue #6360") {
+          ZStream.fromChunk(Chunk("AAAAABBBB#\r\r\r\n", "test")).via(ZPipeline.splitLines).runCollect.map { res =>
+            assertTrue(res == Chunk("AAAAABBBB#\r\r", "test"))
+          }
         }
       ),
       suite("mapChunksZIO")(
@@ -68,38 +82,36 @@ object ZPipelineSpec extends ZIOBaseSpec {
         },
         test("works") {
           assertM(
-            ZPipeline
-              .splitOn("delimiter")(
-                ZStream("abc", "delimiter", "bc", "delimiter", "bcd", "bcd")
-              )
+            ZStream("abc", "delimiter", "bc", "delimiter", "bcd", "bcd")
+              .via(ZPipeline.splitOn("delimiter"))
               .runCollect
           )(equalTo(Chunk("abc", "bc", "bcdbcd")))
         },
         test("single newline edgecase") {
           assertM(
-            ZPipeline.splitOn("test")(ZStream("test")).runCollect
+            ZStream("test").via(ZPipeline.splitOn("test")).runCollect
           )(equalTo(Chunk("")))
         },
         test("no delimiter in data") {
           assertM(
-            ZPipeline.splitOn("hello")(ZStream("abc", "abc", "abc")).runCollect
+            ZStream("abc", "abc", "abc").via(ZPipeline.splitOn("hello")).runCollect
           )(equalTo(Chunk("abcabcabc")))
         },
         test("delimiter on the boundary") {
           assertM(
-            ZPipeline.splitOn("<>")(ZStream("abc<", ">abc")).runCollect
+            ZStream("abc<", ">abc").via(ZPipeline.splitOn("<>")).runCollect
           )(equalTo(Chunk("abc", "abc")))
         }
       ),
       suite("take")(
         test("it takes the correct number of elements") {
           assertM(
-            ZPipeline.take(3)(ZStream(1, 2, 3, 4, 5)).runCollect
+            ZStream(1, 2, 3, 4, 5).via(ZPipeline.take(3)).runCollect
           )(equalTo(Chunk(1, 2, 3)))
         },
         test("it takes all elements if n is larger than the ZStream") {
           assertM(
-            ZPipeline.take(100)(ZStream(1, 2, 3, 4, 5)).runCollect
+            ZStream(1, 2, 3, 4, 5).via(ZPipeline.take(100)).runCollect
           )(equalTo(Chunk(1, 2, 3, 4, 5)))
         }
       )
@@ -112,8 +124,8 @@ object ZPipelineSpec extends ZIOBaseSpec {
   def testSplitLines(input: Seq[Chunk[String]]): ZIO[Any, Nothing, TestResult] = {
     val str      = input.flatMap(_.mkString).mkString
     val expected = Chunk.fromIterable(Source.fromString(str).getLines().toList)
-    ZPipeline.splitLines(ZStream.fromChunks(input: _*)).runCollect.map { res =>
-      assert(res)(equalTo(expected))
+    ZStream.fromChunks(input: _*).via(ZPipeline.splitLines).runCollect.map { res =>
+      assertTrue(res == expected)
     }
   }
 }

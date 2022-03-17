@@ -65,8 +65,9 @@ object TagCorrectnessSpec extends ZIOSpecDefault {
             environment.get
           }
 
-        val layer = testBaseLayer[Any, String] >>> testSecondLayer[String]
-        ZIO.unit.provideCustomLayer(layer).as(assertTrue(true))
+        val layer                                  = testBaseLayer[Any, String] >>> testSecondLayer[String]
+        val zio: ZIO[Svc[String], Nothing, String] = ZIO.succeed("a")
+        zio.provideCustomLayer(layer).as(assertCompletes)
       },
       // https://github.com/zio/zio/issues/3816
       test("Issue #3816") {
@@ -79,7 +80,9 @@ object TagCorrectnessSpec extends ZIOSpecDefault {
             def provide: IO[Throwable, D]
           }
 
-          def layer[A: Tag, D <: Container[A]: Tag](container: D): ULayer[ContainerProvider[A, D]] =
+          def layer[A: Tag, D <: Container[A]: Tag](
+            container: D
+          ): ULayer[ContainerProvider[A, D]] =
             ZLayer.succeed {
               new Service[A, D] {
                 def provide: IO[Throwable, D] = IO.succeed(container)
@@ -132,7 +135,9 @@ object HigherKindedTagCorrectness extends ZIOSpecDefault {
     def get[F[_], K, V](key: K)(implicit tag: Tag[Cache[F, K, V]]): ZIO[Cache[F, K, V], Nothing, F[V]] =
       ZIO.serviceWithZIO(_.get(key))
 
-    def put[F[_], K, V](key: K, value: V)(implicit tag: Tag[Cache[F, K, V]]): ZIO[Cache[F, K, V], Nothing, Unit] =
+    def put[F[_], K, V](key: K, value: V)(implicit
+      tag: Tag[Cache[F, K, V]]
+    ): ZIO[Cache[F, K, V], Nothing, Unit] =
       ZIO.serviceWithZIO(_.put(key, value))
   }
 

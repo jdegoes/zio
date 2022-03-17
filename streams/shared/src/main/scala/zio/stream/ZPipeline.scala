@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import zio.stacktracer.TracingImplicits.disableAutoTrace
 import zio.stream.internal.CharacterSet.{BOM, CharsetUtf32BE, CharsetUtf32LE}
 
 import java.nio.charset.{Charset, StandardCharsets}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 /**
  * A `ZPipeline[Env, Err, In, Out]` is a polymorphic stream transformer.
@@ -52,11 +53,13 @@ import java.nio.charset.{Charset, StandardCharsets}
  * However, the companion object has lots of other pipeline constructors based
  * on the methods of stream.
  */
-trait ZPipeline[-Env, +Err, -In, +Out] { self =>
+class ZPipeline[-Env, +Err, -In, +Out](val channel: ZChannel[Env, ZNothing, Chunk[In], Any, Err, Chunk[Out], Any]) {
+  self =>
 
-  def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
+  final def apply[Env1 <: Env, Err1 >: Err](stream: => ZStream[Env1, Err1, In])(implicit
     trace: ZTraceElement
-  ): ZStream[Env1, Err1, Out]
+  ): ZStream[Env1, Err1, Out] =
+    ZStream.suspend(stream).pipeThroughChannelOrFail(channel)
 
   /**
    * Composes two pipelines into one pipeline, by first applying the
@@ -64,14 +67,19 @@ trait ZPipeline[-Env, +Err, -In, +Out] { self =>
    * the specified pipeline.
    */
   final def >>>[Env1 <: Env, Err1 >: Err, Out2](
-    that: ZPipeline[Env1, Err1, Out, Out2]
-  ): ZPipeline[Env1, Err1, In, Out2] =
-    new ZPipeline[Env1, Err1, In, Out2] {
-      def apply[Env0 <: Env1, Err0 >: Err1](stream: ZStream[Env0, Err0, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env0, Err0, Out2] =
-        that(self(stream))
-    }
+    that: => ZPipeline[Env1, Err1, Out, Out2]
+  )(implicit trace: ZTraceElement): ZPipeline[Env1, Err1, In, Out2] =
+    new ZPipeline(self.channel.pipeToOrFail(that.channel))
+
+  /**
+   * Compose this transducer with a sink, resulting in a sink that processes
+   * elements by piping them through this transducer and piping the results into
+   * the sink.
+   */
+  final def >>>[Env1 <: Env, Err1 >: Err, Leftover, Out2](that: => ZSink[Env1, Err1, Out, Leftover, Out2])(implicit
+    trace: ZTraceElement
+  ): ZSink[Env1, Err1, In, Leftover, Out2] =
+    new ZSink(self.channel.pipeToOrFail(that.channel))
 
   /**
    * Composes two pipelines into one pipeline, by first applying the
@@ -79,29 +87,24 @@ trait ZPipeline[-Env, +Err, -In, +Out] { self =>
    * transformation of this pipeline.
    */
   final def <<<[Env1 <: Env, Err1 >: Err, In2](
-    that: ZPipeline[Env1, Err1, In2, In]
-  ): ZPipeline[Env1, Err1, In2, Out] =
-    new ZPipeline[Env1, Err1, In2, Out] {
-      def apply[Env0 <: Env1, Err0 >: Err1](stream: ZStream[Env0, Err0, In2])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env0, Err0, Out] =
-        self(that(stream))
-    }
+    that: => ZPipeline[Env1, Err1, In2, In]
+  )(implicit trace: ZTraceElement): ZPipeline[Env1, Err1, In2, Out] =
+    ZPipeline.suspend(new ZPipeline(that.channel.pipeToOrFail(self.channel)))
 
   /**
    * A named version of the `>>>` operator.
    */
   final def andThen[Env1 <: Env, Err1 >: Err, Out2](
-    that: ZPipeline[Env1, Err1, Out, Out2]
-  ): ZPipeline[Env1, Err1, In, Out2] =
+    that: => ZPipeline[Env1, Err1, Out, Out2]
+  )(implicit trace: ZTraceElement): ZPipeline[Env1, Err1, In, Out2] =
     self >>> that
 
   /**
    * A named version of the `<<<` operator.
    */
   final def compose[Env1 <: Env, Err1 >: Err, In2](
-    that: ZPipeline[Env1, Err1, In2, In]
-  ): ZPipeline[Env1, Err1, In2, Out] =
+    that: => ZPipeline[Env1, Err1, In2, In]
+  )(implicit trace: ZTraceElement): ZPipeline[Env1, Err1, In2, Out] =
     self <<< that
 }
 
@@ -115,15 +118,43 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * ZPipeline[Int] >>> ZPipeline.filter(_ % 2 != 0)
    * }}}
    */
-  def apply[In]: ZPipeline[Any, Nothing, In, In] =
+  def apply[In](implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
     identity[In]
 
-  def branchAfter[Env, Err, In](n: => Int)(f: Chunk[In] => ZPipeline[Env, Err, In, In]): ZPipeline[Env, Err, In, In] =
-    new ZPipeline[Env, Err, In, In] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, In] =
-        stream.branchAfter(n)(f)
+  def branchAfter[Env, Err, In, Out](
+    n: => Int
+  )(f: Chunk[In] => ZPipeline[Env, Err, In, Out])(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] =
+    ZPipeline.suspend {
+
+      def collecting(buf: Chunk[In]): ZChannel[Env, Err, Chunk[In], Any, Err, Chunk[Out], Any] =
+        ZChannel.readWithCause(
+          (chunk: Chunk[In]) => {
+            val newBuf = buf ++ chunk
+            if (newBuf.length >= n) {
+              val (is, is1) = newBuf.splitAt(n)
+              val pipeline  = f(is)
+              pipeline(ZStream.fromChunk(is1)).channel *> emitting(pipeline)
+            } else
+              collecting(newBuf)
+          },
+          (cause: Cause[Err]) => ZChannel.failCause(cause),
+          (_: Any) =>
+            if (buf.isEmpty)
+              ZChannel.unit
+            else {
+              val pipeline = f(buf)
+              pipeline(ZStream.empty).channel
+            }
+        )
+
+      def emitting(pipeline: ZPipeline[Env, Err, In, Out]): ZChannel[Env, Err, Chunk[In], Any, Err, Chunk[Out], Any] =
+        ZChannel.readWithCause(
+          (chunk: Chunk[In]) => pipeline(ZStream.fromChunk(chunk)).channel *> emitting(pipeline),
+          (cause: Cause[Err]) => ZChannel.failCause(cause),
+          (_: Any) => ZChannel.unit
+        )
+
+      new ZPipeline(collecting(Chunk.empty))
     }
 
   /**
@@ -134,10 +165,30 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * ZPipeline.collect[Option[Int], Int] { case Some(v) => v }
    * }}}
    */
-  def collect[In, Out](f: PartialFunction[In, Out]): ZPipeline[Any, Nothing, In, Out] =
-    new ZPipeline[Any, Nothing, In, Out] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, Out] =
-        stream.collect(f)
+  def collect[In, Out](f: PartialFunction[In, Out])(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, Out] =
+    new ZPipeline(ZChannel.identity[Nothing, Chunk[In], Any].mapOut(_.collect(f)))
+
+  /**
+   * Creates a pipeline that drops n elements.
+   */
+  def drop[In](n: => Int)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    ZPipeline.suspend {
+      def loop(r: Int): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+        ZChannel
+          .readWith(
+            (in: Chunk[In]) => {
+              val dropped  = in.drop(r)
+              val leftover = (r - in.length).max(0)
+              val more     = in.isEmpty || leftover > 0
+
+              if (more) loop(leftover)
+              else ZChannel.write(dropped) *> ZChannel.identity
+            },
+            (e: ZNothing) => ZChannel.fail(e),
+            (_: Any) => ZChannel.unit
+          )
+
+      new ZPipeline(loop(n))
     }
 
   /**
@@ -148,11 +199,8 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * ZPipeline.dropUntil[Int](_ > 100)
    * }}}
    */
-  def dropUntil[In](f: In => Boolean): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.dropUntil(f)
-    }
+  def dropUntil[In](f: In => Boolean)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    ZPipeline.dropWhile[In](!f(_)) >>> ZPipeline.drop(1)
 
   /**
    * Creates a pipeline that drops elements while the specified predicate
@@ -162,32 +210,64 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * ZPipeline.dropWhile[Int](_ <= 100)
    * }}}
    */
-  def dropWhile[In](f: In => Boolean): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.dropWhile(f)
-    }
+  def dropWhile[In](f: In => Boolean)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] = {
+
+    def dropWhile(f: In => Boolean): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+      ZChannel.readWith(
+        in => {
+          val out = in.dropWhile(f)
+          if (out.isEmpty) dropWhile(f)
+          else ZChannel.write(out) *> ZChannel.identity
+        },
+        err => ZChannel.fail(err),
+        out => ZChannel.succeedNow(out)
+      )
+
+    new ZPipeline(dropWhile(f))
+  }
 
   /**
    * Creates a pipeline that filters elements according to the specified
    * predicate.
    */
-  def filter[In](f: In => Boolean): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.filter(f)
-    }
+  def filter[In](f: In => Boolean)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    new ZPipeline(ZChannel.identity[Nothing, Chunk[In], Any].mapOut(_.filter(f)))
 
   /**
    * Creates a pipeline that groups on adjacent keys, calculated by function f.
    */
-  def groupAdjacentBy[In, Key](f: In => Key): ZPipeline[Any, Nothing, In, (Key, NonEmptyChunk[In])] =
-    new ZPipeline[Any, Nothing, In, (Key, NonEmptyChunk[In])] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env, Err, (Key, NonEmptyChunk[In])] =
-        stream.groupAdjacentBy(f)
-    }
+  def groupAdjacentBy[In, Key](
+    f: In => Key
+  )(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, (Key, NonEmptyChunk[In])] = {
+    type Out = (Key, NonEmptyChunk[In])
+    def go(in: Chunk[In], state: Option[Out]): (Chunk[Out], Option[Out]) =
+      in.foldLeft[(Chunk[Out], Option[Out])]((Chunk.empty, state)) {
+        case ((os, None), a) =>
+          (os, Some((f(a), NonEmptyChunk(a))))
+        case ((os, Some(agg @ (k, aggregated))), a) =>
+          val k2 = f(a)
+          if (k == k2)
+            (os, Some((k, aggregated :+ a)))
+          else
+            (os :+ agg, Some((k2, NonEmptyChunk(a))))
+      }
+
+    def chunkAdjacent(buffer: Option[Out]): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[Out], Any] =
+      ZChannel.readWithCause(
+        in = chunk => {
+          val (outputs, newBuffer) = go(chunk, buffer)
+          ZChannel.write(outputs) *> chunkAdjacent(newBuffer)
+        },
+        halt = ZChannel.failCause(_),
+        done = _ =>
+          buffer match {
+            case Some(o) => ZChannel.write(Chunk.single(o))
+            case None    => ZChannel.unit
+          }
+      )
+
+    new ZPipeline(chunkAdjacent(None))
+  }
 
   /**
    * Creates a pipeline that sends all the elements through the given channel.
@@ -195,68 +275,154 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
   def fromChannel[Env, Err, In, Out](
     channel: => ZChannel[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any]
   ): ZPipeline[Env, Err, In, Out] =
-    new ZPipeline[Env, Err, In, Out] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, Out] =
-        stream.pipeThroughChannelOrFail(channel)
-    }
+    new ZPipeline(channel)
 
   /**
    * Creates a pipeline from a chunk processing function.
    */
   def fromPush[Env, Err, In, Out](
     push: => ZManaged[Env, Nothing, Option[Chunk[In]] => ZIO[Env, Err, Chunk[Out]]]
-  ): ZPipeline[Env, Err, In, Out] =
-    new ZPipeline[Env, Err, In, Out] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, Out] = {
+  )(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] = {
 
-        def pull(
-          push: Option[Chunk[In]] => ZIO[Env, Err, Chunk[Out]]
-        ): ZChannel[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any] =
-          ZChannel.readWith[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any](
-            in =>
-              ZChannel
-                .fromZIO(push(Some(in)))
-                .flatMap(out => ZChannel.write(out))
-                .zipRight[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any](pull(push)),
-            err => ZChannel.fail(err),
-            _ => ZChannel.fromZIO(push(None)).flatMap(out => ZChannel.write(out))
-          )
+    def pull(
+      push: Option[Chunk[In]] => ZIO[Env, Err, Chunk[Out]]
+    ): ZChannel[Env, ZNothing, Chunk[In], Any, Err, Chunk[Out], Any] =
+      ZChannel.readWith(
+        in =>
+          ZChannel
+            .fromZIO(push(Some(in)))
+            .flatMap(out => ZChannel.write(out)) *> pull(push),
+        err => ZChannel.fail(err),
+        _ => ZChannel.fromZIO(push(None)).flatMap(out => ZChannel.write(out))
+      )
 
-        val channel: ZChannel[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any] =
-          ZChannel.unwrapManaged[Env, Nothing, Chunk[In], Any, Err, Chunk[Out], Any] {
-            push.map(pull)
+    val channel: ZChannel[Env, ZNothing, Chunk[In], Any, Err, Chunk[Out], Any] =
+      ZChannel.unwrapManaged(push.map(pull))
+
+    new ZPipeline(channel)
+  }
+
+  /**
+   * Creates a pipeline that repeatedly sends all elements through the given
+   * sink.
+   */
+  def fromSink[Env, Err, In, Out](
+    sink: => ZSink[Env, Err, In, In, Out]
+  )(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] =
+    new ZPipeline(
+      ZChannel.suspend {
+        val leftovers: AtomicReference[Chunk[Chunk[In]]] = new AtomicReference(Chunk.empty)
+        val upstreamDone: AtomicBoolean                  = new AtomicBoolean(false)
+
+        lazy val buffer: ZChannel[Any, Err, Chunk[In], Any, Err, Chunk[In], Any] =
+          ZChannel.suspend {
+            val l = leftovers.get
+
+            if (l.isEmpty)
+              ZChannel.readWith(
+                (c: Chunk[In]) => ZChannel.write(c) *> buffer,
+                (e: Err) => ZChannel.fail(e),
+                (done: Any) => ZChannel.succeedNow(done)
+              )
+            else {
+              leftovers.set(Chunk.empty)
+              ZChannel.writeChunk(l) *> buffer
+            }
           }
 
-        stream.pipeThroughChannelOrFail(channel)
+        def concatAndGet(c: Chunk[Chunk[In]]): Chunk[Chunk[In]] = {
+          val ls     = leftovers.get
+          val concat = ls ++ c.filter(_.nonEmpty)
+          leftovers.set(concat)
+          concat
+        }
+
+        lazy val upstreamMarker: ZChannel[Any, Err, Chunk[In], Any, Err, Chunk[In], Any] =
+          ZChannel.readWith(
+            (in: Chunk[In]) => ZChannel.write(in) *> upstreamMarker,
+            (err: Err) => ZChannel.fail(err),
+            (done: Any) => ZChannel.succeed(upstreamDone.set(true)) *> ZChannel.succeedNow(done)
+          )
+
+        lazy val transducer: ZChannel[Env, ZNothing, Chunk[In], Any, Err, Chunk[Out], Unit] =
+          sink.channel.doneCollect.flatMap { case (leftover, z) =>
+            ZChannel
+              .succeed((upstreamDone.get, concatAndGet(leftover)))
+              .flatMap { case (done, newLeftovers) =>
+                val nextChannel =
+                  if (done && newLeftovers.isEmpty) ZChannel.unit
+                  else transducer
+
+                ZChannel.write(Chunk.single(z)) *> nextChannel
+              }
+          }
+
+        upstreamMarker >>>
+          buffer pipeToOrFail
+          transducer
       }
-    }
+    )
 
   /**
    * The identity pipeline, which does not modify streams in any way.
    */
-  def identity[In]: ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream
-    }
+  def identity[In](implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    new ZPipeline(ZChannel.identity)
 
-  val iso_8859_1Decode: ZPipeline[Any, Nothing, Byte, String] =
+  def iso_8859_1Decode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     textDecodeUsing(StandardCharsets.ISO_8859_1)
 
-  val iso_8859_1Encode: ZPipeline[Any, Nothing, String, Byte] =
+  def iso_8859_1Encode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.ISO_8859_1)
 
   /**
    * Creates a pipeline that maps elements with the specified function.
    */
-  def map[In, Out](f: In => Out): ZPipeline[Any, Nothing, In, Out] =
-    new ZPipeline[Any, Nothing, In, Out] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, Out] =
-        stream.map(f)
+  def map[In, Out](f: In => Out)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, Out] =
+    new ZPipeline(ZChannel.identity.mapOut(_.map(f)))
+
+  /**
+   * Creates a pipeline that statefully maps elements with the specified
+   * function.
+   */
+  def mapAccum[In, State, Out](
+    s: => State
+  )(f: (State, In) => (State, Out))(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, Out] =
+    mapAccumZIO(s)((s, in) => ZIO.succeedNow(f(s, in)))
+
+  /**
+   * Creates a pipeline that statefully maps elements with the specified effect.
+   */
+  def mapAccumZIO[Env, Err, In, State, Out](
+    s: => State
+  )(f: (State, In) => ZIO[Env, Err, (State, Out)])(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] =
+    ZPipeline.suspend {
+      def accumulator(s: State): ZChannel[Env, ZNothing, Chunk[In], Any, Err, Chunk[Out], Any] =
+        ZChannel.readWith(
+          (in: Chunk[In]) =>
+            ZChannel.unwrap(
+              ZIO.suspendSucceed {
+                val outputChunk            = ChunkBuilder.make[Out](in.size)
+                val emit: Out => UIO[Unit] = (o: Out) => ZIO.succeed(outputChunk += o).unit
+                ZIO
+                  .foldLeft[Env, Err, State, In](in)(s)((s1, a) => f(s1, a).flatMap(sa => emit(sa._2) as sa._1))
+                  .fold(
+                    failure => {
+                      val partialResult = outputChunk.result()
+                      if (partialResult.nonEmpty)
+                        ZChannel.write(partialResult) *> ZChannel.fail(failure)
+                      else
+                        ZChannel.fail(failure)
+                    },
+                    out => ZChannel.write(outputChunk.result()) *> accumulator(out)
+                  )
+              }
+            ),
+          ZChannel.fail(_),
+          (_: Any) => ZChannel.unit
+        )
+
+      new ZPipeline(accumulator(s))
     }
 
   /**
@@ -265,201 +431,294 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    */
   def mapChunks[In, Out](
     f: Chunk[In] => Chunk[Out]
-  ): ZPipeline[Any, Nothing, In, Out] =
-    new ZPipeline[Any, Nothing, In, Out] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, Out] =
-        stream.mapChunks(f)
-    }
+  )(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, Out] =
+    new ZPipeline(ZChannel.identity[Nothing, Chunk[In], Any].mapOut(f))
 
   /**
    * Creates a pipeline that maps chunks of elements with the specified effect.
    */
   def mapChunksZIO[Env, Err, In, Out](
     f: Chunk[In] => ZIO[Env, Err, Chunk[Out]]
-  ): ZPipeline[Env, Err, In, Out] =
-    new ZPipeline[Env, Err, In, Out] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, Out] =
-        stream.mapChunksZIO(f)
-    }
+  )(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] =
+    new ZPipeline(ZChannel.identity[Nothing, Chunk[In], Any].mapOutZIO(f))
 
   /**
    * Creates a pipeline that maps elements with the specified effectful
    * function.
    */
-  def mapZIO[Env, Err, In, Out](f: In => ZIO[Env, Err, Out]): ZPipeline[Env, Err, In, Out] =
-    new ZPipeline[Env, Err, In, Out] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, Out] =
-        stream.mapZIO(f)
-    }
+  def mapZIO[Env, Err, In, Out](f: In => ZIO[Env, Err, Out])(implicit
+    trace: ZTraceElement
+  ): ZPipeline[Env, Err, In, Out] =
+    new ZPipeline(ZChannel.identity[Nothing, Chunk[In], Any].mapOutZIO(_.mapZIO(f)))
 
   /**
    * Emits the provided chunk before emitting any other value.
    */
-  def prepend[In](values: => Chunk[In]): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        ZStream.fromChunk(values) ++ stream
-    }
+  def prepend[In](values: => Chunk[In])(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    new ZPipeline(ZChannel.write(values) *> ZChannel.identity)
 
   /**
    * A pipeline that rechunks the stream into chunks of the specified size.
    */
-  def rechunk[In](n: => Int): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.rechunk(n)
-    }
+  def rechunk[In](n: => Int)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] = {
+
+    def process(
+      rechunker: ZStream.Rechunker[In],
+      target: Int
+    ): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+      ZChannel.readWithCause(
+        (chunk: Chunk[In]) =>
+          if (chunk.size == target && rechunker.isEmpty) {
+            ZChannel.write(chunk) *> process(rechunker, target)
+          } else if (chunk.size > 0) {
+            var chunks: List[Chunk[In]] = Nil
+            var result: Chunk[In]       = null
+            var i                       = 0
+
+            while (i < chunk.size) {
+              while (i < chunk.size && (result eq null)) {
+                result = rechunker.write(chunk(i))
+                i += 1
+              }
+
+              if (result ne null) {
+                chunks = result :: chunks
+                result = null
+              }
+            }
+
+            ZChannel.writeAll(chunks.reverse: _*) *> process(rechunker, target)
+          } else process(rechunker, target),
+        (cause: Cause[ZNothing]) => rechunker.emitIfNotEmpty() *> ZChannel.failCause(cause),
+        (_: Any) => rechunker.emitIfNotEmpty()
+      )
+
+    val target = n
+    new ZPipeline(ZChannel.suspend(process(new ZStream.Rechunker(target), target)))
+  }
 
   /**
    * Creates a pipeline that scans elements with the specified function.
    */
-  def scan[In, Out](s: => Out)(f: (Out, In) => Out): ZPipeline[Any, Nothing, In, Out] =
+  def scan[In, Out](s: => Out)(f: (Out, In) => Out)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, Out] =
     scanZIO(s)((out, in) => ZIO.succeedNow(f(out, in)))
 
   /**
    * Creates a pipeline that scans elements with the specified function.
    */
-  def scanZIO[Env, Err, In, Out](s: => Out)(f: (Out, In) => ZIO[Env, Err, Out]): ZPipeline[Env, Err, In, Out] =
-    new ZPipeline[Env, Err, In, Out] {
-      def apply[Env1 <: Env, Err1 >: Err](stream: ZStream[Env1, Err1, In])(implicit
-        trace: ZTraceElement
-      ): ZStream[Env1, Err1, Out] =
-        stream.scanZIO(s)(f)
+  def scanZIO[Env, Err, In, Out](
+    s: => Out
+  )(f: (Out, In) => ZIO[Env, Err, Out])(implicit trace: ZTraceElement): ZPipeline[Env, Err, In, Out] =
+    ZPipeline.suspend {
+      new ZPipeline(
+        ZChannel.write(Chunk.single(s)) *>
+          mapAccumZIO[Env, Err, In, Out, Out](s)((s, a) => f(s, a).map(s => (s, s))).channel
+      )
     }
 
   /**
    * Splits strings on a delimiter.
    */
-  def splitOn(delimiter: => String): ZPipeline[Any, Nothing, String, String] =
-    new ZPipeline[Any, Nothing, String, String] {
-      def apply[Env, Err](stream: ZStream[Env, Err, String])(implicit trace: ZTraceElement): ZStream[Env, Err, String] =
-        stream
-          .map(str => Chunk.fromArray(str.toArray))
-          .mapChunks(_.flatten)
-          .splitOnChunk(Chunk.fromArray(delimiter.toArray))
-          .map(_.mkString(""))
-    }
+  def splitOn(delimiter: => String)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, String] =
+    ZPipeline.mapChunks[String, Char](_.flatMap(string => Chunk.fromArray(string.toArray))) >>>
+      ZPipeline.splitOnChunk[Char](Chunk.fromArray(delimiter.toArray)) >>>
+      ZPipeline.mapChunks[Char, String](chunk => Chunk.single(chunk.mkString("")))
 
   /**
    * Splits strings on a delimiter.
    */
-  def splitOnChunk[In](delimiter: => Chunk[In]): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream
-          .splitOnChunk(delimiter)
-          .flattenChunks
+  def splitOnChunk[In](delimiter: => Chunk[In])(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    ZPipeline.suspend {
+
+      def next(
+        leftover: Option[Chunk[In]],
+        delimiterIndex: Int
+      ): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+        ZChannel.readWithCause(
+          inputChunk => {
+            var buffer = null.asInstanceOf[collection.mutable.ArrayBuffer[Chunk[In]]]
+            inputChunk.foldLeft((leftover getOrElse Chunk.empty, delimiterIndex)) {
+              case ((carry, delimiterCursor), a) =>
+                val concatenated = carry :+ a
+                if (delimiterCursor < delimiter.length && a == delimiter(delimiterCursor)) {
+                  if (delimiterCursor + 1 == delimiter.length) {
+                    if (buffer eq null) buffer = collection.mutable.ArrayBuffer[Chunk[In]]()
+                    buffer += concatenated.take(concatenated.length - delimiter.length)
+                    (Chunk.empty, 0)
+                  } else (concatenated, delimiterCursor + 1)
+                } else (concatenated, if (a == delimiter(0)) 1 else 0)
+            } match {
+              case (carry, delimiterCursor) =>
+                ZChannel.writeChunk(if (buffer eq null) Chunk.empty else Chunk.fromArray(buffer.toArray)) *> next(
+                  if (carry.nonEmpty) Some(carry) else None,
+                  delimiterCursor
+                )
+            }
+          },
+          halt =>
+            leftover match {
+              case Some(chunk) => ZChannel.write(chunk) *> ZChannel.failCause(halt)
+              case None        => ZChannel.failCause(halt)
+            },
+          done =>
+            leftover match {
+              case Some(chunk) => ZChannel.write(chunk) *> ZChannel.succeed(done)
+              case None        => ZChannel.succeed(done)
+            }
+        )
+      new ZPipeline(next(None, 0))
     }
 
   /**
    * Splits strings on newlines. Handles both Windows newlines (`\r\n`) and UNIX
    * newlines (`\n`).
    */
-  val splitLines: ZPipeline[Any, Nothing, String, String] =
-    new ZPipeline[Any, Nothing, String, String] {
-      def apply[Env, Err](
-        stream: ZStream[Env, Err, String]
-      )(implicit trace: ZTraceElement): ZStream[Env, Err, String] = {
-        def next(
-          leftover: Option[String],
-          wasSplitCRLF: Boolean
-        ): ZChannel[Env, Err, Chunk[String], Any, Err, Chunk[String], Any] =
-          ZChannel.readWithCause[Env, Err, Chunk[String], Any, Err, Chunk[String], Any](
-            incomingChunk => {
-              val buffer = collection.mutable.ArrayBuffer.empty[String]
-              var inCRLF = wasSplitCRLF
-              var carry  = leftover getOrElse ""
+  def splitLines(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, String] = {
+    def next(
+      leftover: Option[String],
+      wasSplitCRLF: Boolean
+    ): ZChannel[Any, ZNothing, Chunk[String], Any, Nothing, Chunk[String], Any] =
+      ZChannel.readWithCause(
+        incomingChunk => {
+          val buffer = collection.mutable.ArrayBuffer.empty[String]
+          var inCRLF = wasSplitCRLF
+          var carry  = leftover getOrElse ""
 
-              incomingChunk foreach { string =>
-                val concatenated = carry concat string
+          incomingChunk foreach { string =>
+            val concatenated = carry concat string
 
-                if (concatenated.nonEmpty) {
+            if (concatenated.nonEmpty) {
+              // If we had a split CRLF, start reading from the last character of the leftover, which was the '\r'
+              // Otherwise we just skip over the entire previous leftover, as it doesn't contain a newline.
+              val continueFrom =
+                if (inCRLF && carry.nonEmpty) carry.length - 1
+                else carry.length
 
-                  // If we had a split CRLF, start reading from the last character of the leftover, which was the '\r'
-                  // Otherwise we just skip over the entire previous leftover, as it doesn't contain a newline.
-                  val continueFrom =
-                    if (inCRLF && carry.nonEmpty) carry.length - 1
-                    else carry.length
-
-                  concatenated.zipWithIndex
-                    .drop(continueFrom)
-                    .foldLeft((0, false, inCRLF)) { case ((sliceStart, skipNext, midCRLF), (char, index)) =>
-                      if (skipNext) (sliceStart, false, false)
-                      else
-                        char match {
-                          case '\n' =>
-                            buffer += concatenated.substring(sliceStart, index)
-                            (index + 1, false, midCRLF)
-                          case '\r' =>
-                            if (index + 1 < concatenated.length && concatenated(index + 1) == '\n') {
-                              buffer += concatenated.substring(sliceStart, index)
-                              (index + 2, true, false)
-                            } else if (index == concatenated.length - 1)
-                              (sliceStart, false, true)
-                            else (index, false, false)
-                          case _ => (sliceStart, false, midCRLF)
-                        }
-                    } match {
-                    case (sliceStart, _, midCRLF) =>
-                      carry = concatenated.drop(sliceStart)
-                      inCRLF = midCRLF
-                  }
-                }
+              concatenated.zipWithIndex
+                .drop(continueFrom)
+                .foldLeft((0, false, inCRLF)) { case ((sliceStart, skipNext, midCRLF), (char, index)) =>
+                  if (skipNext) (sliceStart, false, false)
+                  else
+                    char match {
+                      case '\n' =>
+                        buffer += concatenated.substring(sliceStart, index)
+                        (index + 1, false, midCRLF)
+                      case '\r' =>
+                        if (index + 1 < concatenated.length && concatenated(index + 1) == '\n') {
+                          buffer += concatenated.substring(sliceStart, index)
+                          (index + 2, true, false)
+                        } else if (index == concatenated.length - 1)
+                          (sliceStart, false, true)
+                        else (sliceStart, false, false)
+                      case _ => (sliceStart, false, midCRLF)
+                    }
+                } match {
+                case (sliceStart, _, midCRLF) =>
+                  carry = concatenated.drop(sliceStart)
+                  inCRLF = midCRLF
               }
+            }
+          }
 
-              ZChannel.write(Chunk.fromArray(buffer.toArray)) *>
-                next(if (carry.nonEmpty) Some(carry) else None, inCRLF)
-            },
-            halt =>
-              leftover match {
-                case Some(value) => ZChannel.write(Chunk.single(value)) *> ZChannel.failCause(halt)
-                case None        => ZChannel.failCause(halt)
-              },
-            done =>
-              leftover match {
-                case Some(value) => ZChannel.write(Chunk.single(value)) *> ZChannel.succeed(done)
-                case None        => ZChannel.succeed(done)
-              }
-          )
+          ZChannel.write(Chunk.fromArray(buffer.toArray)) *>
+            next(if (carry.nonEmpty) Some(carry) else None, inCRLF)
+        },
+        halt =>
+          leftover match {
+            case Some(value) => ZChannel.write(Chunk.single(value)) *> ZChannel.failCause(halt)
+            case None        => ZChannel.failCause(halt)
+          },
+        done =>
+          leftover match {
+            case Some(value) => ZChannel.write(Chunk.single(value)) *> ZChannel.succeed(done)
+            case None        => ZChannel.succeed(done)
+          }
+      )
 
-        new ZStream[Env, Err, String](stream.channel >>> next(None, wasSplitCRLF = false))
-      }
-    }
+    new ZPipeline(next(None, wasSplitCRLF = false))
+  }
+
+  /**
+   * Lazily constructs a pipeline.
+   */
+  def suspend[Env, Err, In, Out](pipeline: => ZPipeline[Env, Err, In, Out]): ZPipeline[Env, Err, In, Out] =
+    new ZPipeline(ZChannel.suspend(pipeline.channel))
 
   /**
    * Creates a pipeline that takes n elements.
    */
-  def take[In](n: => Long): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.take(n)
+  def take[In](n: => Long)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] =
+    ZPipeline.suspend {
+
+      def loop(n: Long): ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+        ZChannel
+          .readWith(
+            (chunk: Chunk[In]) => {
+              val taken    = chunk.take(n.min(Int.MaxValue).toInt)
+              val leftover = (n - taken.length).max(0)
+              val more     = leftover > 0
+
+              if (more)
+                ZChannel.write(taken) *> loop(leftover)
+              else ZChannel.write(taken)
+            },
+            ZChannel.fail(_),
+            ZChannel.succeed(_)
+          )
+
+      new ZPipeline(
+        if (0 < n)
+          loop(n)
+        else
+          ZChannel.unit
+      )
     }
 
   /**
    * Creates a pipeline that takes elements until the specified predicate
    * evaluates to true.
    */
-  def takeUntil[In](f: In => Boolean): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.takeUntil(f)
-    }
+  def takeUntil[In](f: In => Boolean)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] = {
+    lazy val loop: ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+      ZChannel
+        .readWith(
+          (chunk: Chunk[In]) => {
+            val taken = chunk.takeWhile(!f(_))
+            val last  = chunk.drop(taken.length).take(1)
+
+            if (last.isEmpty) ZChannel.write(taken) *> loop
+            else ZChannel.write(taken ++ last)
+          },
+          ZChannel.fail(_),
+          ZChannel.succeed(_)
+        )
+
+    new ZPipeline(loop)
+  }
 
   /**
    * Creates a pipeline that takes elements while the specified predicate
    * evaluates to true.
    */
-  def takeWhile[In](f: In => Boolean): ZPipeline[Any, Nothing, In, In] =
-    new ZPipeline[Any, Nothing, In, In] {
-      def apply[Env, Err](stream: ZStream[Env, Err, In])(implicit trace: ZTraceElement): ZStream[Env, Err, In] =
-        stream.takeWhile(f)
-    }
+  def takeWhile[In](f: In => Boolean)(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, In, In] = {
+    lazy val loop: ZChannel[Any, ZNothing, Chunk[In], Any, Nothing, Chunk[In], Any] =
+      ZChannel
+        .readWith(
+          (chunk: Chunk[In]) => {
+            val taken = chunk.takeWhile(f)
+            val more  = taken.length == chunk.length
 
-  val usASCIIDecode: ZPipeline[Any, Nothing, Byte, String] =
+            if (more) ZChannel.write(taken) *> loop
+            else ZChannel.write(taken)
+          },
+          ZChannel.fail(_),
+          ZChannel.succeed(_)
+        )
+
+    new ZPipeline(loop)
+  }
+
+  def usASCIIDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     textDecodeUsing(StandardCharsets.US_ASCII)
 
   /**
@@ -468,7 +727,7 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * utf16 and utf32 without BOM, `utf16Decode` and `utf32Decode` should be used
    * instead as both default to their own default decoder respectively.
    */
-  val utfDecode: ZPipeline[Any, Nothing, Byte, String] =
+  def utfDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeDetectingBom(
       bomSize = 4,
       {
@@ -487,7 +746,7 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
       }
     )
 
-  val utf8Decode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf8Decode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeDetectingBom(
       bomSize = 3,
       {
@@ -498,7 +757,7 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
       }
     )
 
-  val utf16Decode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf16Decode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeDetectingBom(
       bomSize = 2,
       {
@@ -511,13 +770,13 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
       }
     )
 
-  val utf16BEDecode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf16BEDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeFixedLength(StandardCharsets.UTF_16BE, fixedLength = 2)
 
-  val utf16LEDecode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf16LEDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeFixedLength(StandardCharsets.UTF_16LE, fixedLength = 2)
 
-  val utf32Decode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf32Decode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeDetectingBom(
       bomSize = 4,
       {
@@ -528,13 +787,13 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
       }
     )
 
-  val utf32BEDecode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf32BEDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeFixedLength(CharsetUtf32BE, fixedLength = 4)
 
-  val utf32LEDecode: ZPipeline[Any, Nothing, Byte, String] =
+  def utf32LEDecode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
     utfDecodeFixedLength(CharsetUtf32LE, fixedLength = 4)
 
-  val usASCIIEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def usASCIIEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.US_ASCII)
 
   /**
@@ -550,73 +809,71 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
    * `getBytes("UTF-16")` in Java. In fact, it is an alias to both
    * `utf16BEWithBomEncode` and `utf16WithBomEncode`.
    */
-  val utf8Encode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf8Encode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_8)
 
-  val utf8WithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf8WithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_8, bom = BOM.Utf8)
 
-  val utf16BEEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16BEEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_16BE)
 
-  val utf16BEWithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16BEWithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_16BE, bom = BOM.Utf16BE)
 
-  val utf16LEEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16LEEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_16LE)
 
-  val utf16LEWithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16LEWithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(StandardCharsets.UTF_16LE, bom = BOM.Utf16LE)
 
-  val utf16Encode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16Encode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utf16BEWithBomEncode
 
-  val utf16WithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf16WithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utf16BEWithBomEncode
 
-  val utf32BEEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32BEEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(CharsetUtf32BE)
 
-  val utf32BEWithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32BEWithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(CharsetUtf32BE, bom = BOM.Utf32BE)
 
-  val utf32LEEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32LEEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(CharsetUtf32LE)
 
-  val utf32LEWithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32LEWithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utfEncodeFor(CharsetUtf32LE, bom = BOM.Utf32LE)
 
-  val utf32Encode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32Encode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utf32BEEncode
 
-  val utf32WithBomEncode: ZPipeline[Any, Nothing, String, Byte] =
+  def utf32WithBomEncode(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
     utf32BEWithBomEncode
 
-  private def textDecodeUsing(charset: => Charset): ZPipeline[Any, Nothing, Byte, String] =
-    new ZPipeline[Any, Nothing, Byte, String] {
-      def apply[Env, Err](stream: ZStream[Env, Err, Byte])(implicit trace: ZTraceElement): ZStream[Env, Err, String] = {
+  private def textDecodeUsing(
+    charset: => Charset
+  )(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
+    ZPipeline.suspend {
 
-        def stringChunkFrom(bytes: Chunk[Byte], charset: Charset) =
-          Chunk.single(
-            new String(bytes.toArray, charset)
-          )
-
-        def transform(charset: Charset): ZChannel[Env, Err, Chunk[Byte], Any, Err, Chunk[String], Any] =
-          ZChannel.readWith(
-            received => {
-              if (received.isEmpty)
-                transform(charset)
-              else
-                ZChannel.write(stringChunkFrom(received, charset))
-            },
-            error = ZChannel.fail(_),
-            done = _ => ZChannel.unit
-          )
-
-        new ZStream(
-          stream.channel >>> transform(charset)
+      def stringChunkFrom(bytes: Chunk[Byte], charset: Charset) =
+        Chunk.single(
+          new String(bytes.toArray, charset)
         )
-      }
+
+      def transform(charset: Charset): ZChannel[Any, ZNothing, Chunk[Byte], Any, Nothing, Chunk[String], Any] =
+        ZChannel.readWith(
+          received => {
+            if (received.isEmpty)
+              transform(charset)
+            else
+              ZChannel.write(stringChunkFrom(received, charset))
+          },
+          error = ZChannel.fail(_),
+          done = _ => ZChannel.unit
+        )
+
+      new ZPipeline(transform(charset))
     }
 
   private def utfDecodeDetectingBom(
@@ -625,229 +882,203 @@ object ZPipeline extends ZPipelinePlatformSpecificConstructors {
       Chunk[Byte],
       ZPipeline[Any, Nothing, Byte, String]
     )
+  )(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] =
+    ZPipeline.suspend {
+
+      type DecodingChannel = ZChannel[Any, ZNothing, Chunk[Byte], Any, Nothing, Chunk[String], Any]
+
+      def passThrough(
+        decodingPipeline: ZPipeline[Any, Nothing, Byte, String]
+      ): DecodingChannel =
+        ZChannel.readWith(
+          received => decodingPipeline(ZStream.fromChunk(received)).channel *> passThrough(decodingPipeline),
+          error = ZChannel.fail(_),
+          done = _ => ZChannel.unit
+        )
+
+      def lookingForBom(buffer: Chunk[Byte], bomSize: Int): DecodingChannel =
+        ZChannel.readWith(
+          received => {
+            val data = buffer ++ received
+
+            if (data.length >= bomSize) {
+              val (bom, rest)                        = data.splitAt(bomSize)
+              val (dataWithoutBom, decodingPipeline) = processBom(bom)
+
+              decodingPipeline(ZStream.fromChunk(dataWithoutBom ++ rest)).channel *> passThrough(decodingPipeline)
+            } else {
+              lookingForBom(data, bomSize)
+            }
+          },
+          error = ZChannel.fail(_),
+          done = _ =>
+            if (buffer.isEmpty) ZChannel.unit
+            else {
+              val (dataWithoutBom, decodingPipeline) = processBom(buffer)
+              decodingPipeline(ZStream.fromChunk(dataWithoutBom)).channel *> passThrough(decodingPipeline)
+            }
+        )
+
+      new ZPipeline(lookingForBom(Chunk.empty, bomSize))
+    }
+
+  private def utf8DecodeNoBom(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, Byte, String] = {
+
+    val emptyByteChunk: Chunk[Byte] =
+      Chunk.empty
+    val emptyStringChunk =
+      Chunk.single("")
+
+    val is2ByteStart =
+      (b: Byte) => (b & 0xe0) == 0xc0
+    val is3ByteStart =
+      (b: Byte) => (b & 0xf0) == 0xe0
+    val is4ByteStart =
+      (b: Byte) => (b & 0xf8) == 0xf0
+
+    def computeSplitIndex(chunk: Chunk[Byte]) = {
+      // There are 3 bad patterns we need to check to detect an incomplete chunk:
+      // - 2/3/4 byte sequences that start on the last byte
+      // - 3/4 byte sequences that start on the second-to-last byte
+      // - 4 byte sequences that start on the third-to-last byte
+      //
+      // Otherwise, we can convert the entire concatenated chunk to a string.
+      val size = chunk.length
+
+      if (
+        size >= 1 &&
+        List(is2ByteStart, is3ByteStart, is4ByteStart).exists(_(chunk(size - 1)))
+      ) {
+        size - 1
+      } else if (
+        size >= 2 &&
+        List(is3ByteStart, is4ByteStart).exists(_(chunk(size - 2)))
+      ) {
+        size - 2
+      } else if (size >= 3 && is4ByteStart(chunk(size - 3))) {
+        size - 3
+      } else {
+        size
+      }
+    }
+
+    def stringChunkFrom(bytes: Chunk[Byte]) =
+      Chunk.single(
+        new String(bytes.toArray, StandardCharsets.UTF_8)
+      )
+
+    def process(buffered: Chunk[Byte], received: Chunk[Byte]): (Chunk[String], Chunk[Byte]) = {
+      val bytes         = buffered ++ received
+      val (chunk, rest) = bytes.splitAt(computeSplitIndex(bytes))
+
+      if (chunk.isEmpty) {
+        emptyStringChunk -> rest.materialize
+      } else if (rest.isEmpty) {
+        stringChunkFrom(chunk) -> emptyByteChunk
+      } else {
+        stringChunkFrom(chunk) -> rest
+      }
+    }
+
+    def readThenTransduce(buffer: Chunk[Byte]): ZChannel[Any, ZNothing, Chunk[Byte], Any, Nothing, Chunk[String], Any] =
+      ZChannel.readWith(
+        received => {
+          val (string, buffered) = process(buffer, received)
+
+          ZChannel.write(string) *> readThenTransduce(buffered)
+        },
+        error = ZChannel.fail(_),
+        done = _ =>
+          if (buffer.isEmpty)
+            ZChannel.unit
+          else
+            ZChannel.write(stringChunkFrom(buffer))
+      )
+
+    new ZPipeline(readThenTransduce(emptyByteChunk))
+  }
+
+  private def utfDecodeFixedLength(charset: => Charset, fixedLength: => Int)(implicit
+    trace: ZTraceElement
   ): ZPipeline[Any, Nothing, Byte, String] =
-    new ZPipeline[Any, Nothing, Byte, String] {
-      def apply[Env, Err](stream: ZStream[Env, Err, Byte])(implicit trace: ZTraceElement): ZStream[Env, Err, String] = {
+    ZPipeline.suspend {
 
-        type DecodingChannel = ZChannel[Env, Err, Chunk[Byte], Any, Err, Chunk[String], Any]
+      val emptyByteChunk: Chunk[Byte] =
+        Chunk.empty
+      val emptyStringChunk =
+        Chunk.single("")
 
-        def passThrough(
-          decodingPipeline: ZPipeline[Any, Nothing, Byte, String]
-        ): DecodingChannel =
-          ZChannel.readWith(
-            received =>
-              decodingPipeline(
-                ZStream.fromChunk(received)
-              ).channel *>
-                passThrough(decodingPipeline),
-            error = ZChannel.fail(_),
-            done = _ => ZChannel.unit
-          )
-
-        def lookingForBom(buffer: Chunk[Byte], bomSize: Int): DecodingChannel =
-          ZChannel.readWith(
-            received => {
-              val data = buffer ++ received
-
-              if (data.length >= bomSize) {
-                val (bom, rest)                        = data.splitAt(bomSize)
-                val (dataWithoutBom, decodingPipeline) = processBom(bom)
-
-                decodingPipeline(
-                  ZStream.fromChunk(dataWithoutBom ++ rest)
-                ).channel *>
-                  passThrough(decodingPipeline)
-              } else {
-                lookingForBom(data, bomSize)
-              }
-            },
-            error = ZChannel.fail(_),
-            done = _ =>
-              if (buffer.isEmpty) ZChannel.unit
-              else {
-                val (dataWithoutBom, decodingPipeline) = processBom(buffer)
-                decodingPipeline(
-                  ZStream.fromChunk(dataWithoutBom)
-                ).channel *>
-                  passThrough(decodingPipeline)
-              }
-          )
-
-        new ZStream(
-          stream.channel >>> lookingForBom(Chunk.empty, bomSize)
+      def stringChunkFrom(bytes: Chunk[Byte], charset: Charset) =
+        Chunk.single(
+          new String(bytes.toArray, charset)
         )
+
+      def process(
+        buffered: Chunk[Byte],
+        received: Chunk[Byte],
+        charset: Charset,
+        fixedLength: Int
+      ): (Chunk[String], Chunk[Byte]) = {
+        val bytes     = buffered ++ received
+        val remainder = bytes.length % fixedLength
+
+        if (remainder == 0) {
+          stringChunkFrom(bytes, charset) -> emptyByteChunk
+        } else if (bytes.length > fixedLength) {
+          val (fullChunk, rest) = bytes.splitAt(bytes.length - remainder)
+
+          stringChunkFrom(fullChunk, charset) -> rest
+        } else {
+          emptyStringChunk -> bytes.materialize
+        }
       }
-    }
 
-  private val utf8DecodeNoBom: ZPipeline[Any, Nothing, Byte, String] =
-    new ZPipeline[Any, Nothing, Byte, String] {
-      def apply[Env, Err](stream: ZStream[Env, Err, Byte])(implicit trace: ZTraceElement): ZStream[Env, Err, String] = {
+      def readThenTransduce(
+        buffer: Chunk[Byte],
+        charset: Charset,
+        fixedLength: Int
+      ): ZChannel[Any, ZNothing, Chunk[Byte], Any, Nothing, Chunk[String], Any] =
+        ZChannel.readWith(
+          received => {
+            val (string, buffered) = process(buffer, received, charset, fixedLength)
 
-        val emptyByteChunk: Chunk[Byte] =
-          Chunk.empty
-        val emptyStringChunk =
-          Chunk.single("")
-
-        val is2ByteStart =
-          (b: Byte) => (b & 0xe0) == 0xc0
-        val is3ByteStart =
-          (b: Byte) => (b & 0xf0) == 0xe0
-        val is4ByteStart =
-          (b: Byte) => (b & 0xf8) == 0xf0
-
-        def computeSplitIndex(chunk: Chunk[Byte]) = {
-          // There are 3 bad patterns we need to check to detect an incomplete chunk:
-          // - 2/3/4 byte sequences that start on the last byte
-          // - 3/4 byte sequences that start on the second-to-last byte
-          // - 4 byte sequences that start on the third-to-last byte
-          //
-          // Otherwise, we can convert the entire concatenated chunk to a string.
-          val size = chunk.length
-
-          if (
-            size >= 1 &&
-            List(is2ByteStart, is3ByteStart, is4ByteStart).exists(_(chunk(size - 1)))
-          ) {
-            size - 1
-          } else if (
-            size >= 2 &&
-            List(is3ByteStart, is4ByteStart).exists(_(chunk(size - 2)))
-          ) {
-            size - 2
-          } else if (size >= 3 && is4ByteStart(chunk(size - 3))) {
-            size - 3
-          } else {
-            size
-          }
-        }
-
-        def stringChunkFrom(bytes: Chunk[Byte]) =
-          Chunk.single(
-            new String(bytes.toArray, StandardCharsets.UTF_8)
-          )
-
-        def process(buffered: Chunk[Byte], received: Chunk[Byte]): (Chunk[String], Chunk[Byte]) = {
-          val bytes         = buffered ++ received
-          val (chunk, rest) = bytes.splitAt(computeSplitIndex(bytes))
-
-          if (chunk.isEmpty) {
-            emptyStringChunk -> rest.materialize
-          } else if (rest.isEmpty) {
-            stringChunkFrom(chunk) -> emptyByteChunk
-          } else {
-            stringChunkFrom(chunk) -> rest
-          }
-        }
-
-        def readThenTransduce(buffer: Chunk[Byte]): ZChannel[Env, Err, Chunk[Byte], Any, Err, Chunk[String], Any] =
-          ZChannel.readWith(
-            received => {
-              val (string, buffered) = process(buffer, received)
-
-              ZChannel.write(string) *> readThenTransduce(buffered)
-            },
-            error = ZChannel.fail(_),
-            done = _ =>
-              if (buffer.isEmpty)
-                ZChannel.unit
-              else
-                ZChannel.write(stringChunkFrom(buffer))
-          )
-
-        new ZStream(
-          stream.channel >>> readThenTransduce(emptyByteChunk)
+            ZChannel.write(string) *> readThenTransduce(buffered, charset, fixedLength)
+          },
+          error = ZChannel.fail(_),
+          done = _ =>
+            if (buffer.isEmpty)
+              ZChannel.unit
+            else
+              ZChannel.write(stringChunkFrom(buffer, charset))
         )
-      }
-    }
 
-  private def utfDecodeFixedLength(charset: => Charset, fixedLength: => Int): ZPipeline[Any, Nothing, Byte, String] =
-    new ZPipeline[Any, Nothing, Byte, String] {
-      def apply[Env, Err](stream: ZStream[Env, Err, Byte])(implicit trace: ZTraceElement): ZStream[Env, Err, String] = {
-
-        val emptyByteChunk: Chunk[Byte] =
-          Chunk.empty
-        val emptyStringChunk =
-          Chunk.single("")
-
-        def stringChunkFrom(bytes: Chunk[Byte], charset: Charset) =
-          Chunk.single(
-            new String(bytes.toArray, charset)
-          )
-
-        def process(
-          buffered: Chunk[Byte],
-          received: Chunk[Byte],
-          charset: Charset,
-          fixedLength: Int
-        ): (Chunk[String], Chunk[Byte]) = {
-          val bytes     = buffered ++ received
-          val remainder = bytes.length % fixedLength
-
-          if (remainder == 0) {
-            stringChunkFrom(bytes, charset) -> emptyByteChunk
-          } else if (bytes.length > fixedLength) {
-            val (fullChunk, rest) = bytes.splitAt(bytes.length - remainder)
-
-            stringChunkFrom(fullChunk, charset) -> rest
-          } else {
-            emptyStringChunk -> bytes.materialize
-          }
-        }
-
-        def readThenTransduce(
-          buffer: Chunk[Byte],
-          charset: Charset,
-          fixedLength: Int
-        ): ZChannel[Env, Err, Chunk[Byte], Any, Err, Chunk[String], Any] =
-          ZChannel.readWith(
-            received => {
-              val (string, buffered) = process(buffer, received, charset, fixedLength)
-
-              ZChannel.write(string) *> readThenTransduce(buffered, charset, fixedLength)
-            },
-            error = ZChannel.fail(_),
-            done = _ =>
-              if (buffer.isEmpty)
-                ZChannel.unit
-              else
-                ZChannel.write(stringChunkFrom(buffer, charset))
-          )
-
-        new ZStream(
-          stream.channel >>> readThenTransduce(emptyByteChunk, charset, fixedLength)
-        )
-      }
+      new ZPipeline(readThenTransduce(emptyByteChunk, charset, fixedLength))
     }
 
   private def utfEncodeFor(
     charset: => Charset,
     bom: => Chunk[Byte] = Chunk.empty
-  ): ZPipeline[Any, Nothing, String, Byte] =
-    new ZPipeline[Any, Nothing, String, Byte] {
-      def apply[Env, Err](stream: ZStream[Env, Err, String])(implicit trace: ZTraceElement): ZStream[Env, Err, Byte] = {
-        def transform: ZChannel[Env, Err, Chunk[String], Any, Err, Chunk[Byte], Any] =
-          ZChannel.readWith(
-            received =>
-              if (received.isEmpty)
-                transform
-              else {
-                val bytes = received.foldLeft[Chunk[Byte]](
-                  Chunk.empty
-                ) { (acc, string) =>
-                  val bytes = string.getBytes(charset)
-                  acc ++ Chunk.fromArray(bytes)
-                }
+  )(implicit trace: ZTraceElement): ZPipeline[Any, Nothing, String, Byte] =
+    ZPipeline.suspend {
+      def transform: ZChannel[Any, ZNothing, Chunk[String], Any, Nothing, Chunk[Byte], Any] =
+        ZChannel.readWith(
+          received =>
+            if (received.isEmpty)
+              transform
+            else {
+              val bytes = received.foldLeft[Chunk[Byte]](
+                Chunk.empty
+              ) { (acc, string) =>
+                val bytes = string.getBytes(charset)
+                acc ++ Chunk.fromArray(bytes)
+              }
 
-                ZChannel.write(bytes)
-              },
-            error = ZChannel.fail(_),
-            done = _ => ZChannel.unit
-          )
+              ZChannel.write(bytes) *> transform
+            },
+          error = ZChannel.fail(_),
+          done = _ => ZChannel.unit
+        )
 
-        ZStream.fromChunk(bom) ++
-          new ZStream(
-            stream.channel >>> transform
-          )
-      }
+      new ZPipeline(ZChannel.write(bom) *> transform)
     }
 }

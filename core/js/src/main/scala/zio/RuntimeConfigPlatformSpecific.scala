@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,19 +57,20 @@ private[zio] trait RuntimeConfigPlatformSpecific {
 
     val fatal = (_: Throwable) => false
 
-    val loggerString: ZLogger[String, Unit] =
+    val logger: ZLogger[String, Unit] =
       (
         trace: ZTraceElement,
         fiberId: FiberId,
         level: LogLevel,
         message: () => String,
+        cause: Cause[Any],
         context: Map[FiberRef.Runtime[_], AnyRef],
         spans: List[LogSpan],
-        location: ZTraceElement
+        annotations: Map[String, String]
       ) => {
         try {
           // TODO: Improve output & use console.group for spans, etc.
-          val line = ZLogger.defaultString(trace, fiberId, level, message, context, spans, location)
+          val line = ZLogger.default(trace, fiberId, level, message, cause, context, spans, annotations)
 
           if (level == LogLevel.Fatal) jsglobal.console.error(line)
           else if (level == LogLevel.Error) jsglobal.console.error(line)
@@ -81,10 +82,6 @@ private[zio] trait RuntimeConfigPlatformSpecific {
           case t if !fatal(t) => ()
         }
       }
-
-    val loggerCause: ZLogger[Cause[Any], Unit] = loggerString.contramap(_.prettyPrint)
-
-    val loggers = ZLogger.Set(loggerString, loggerCause).filterLogLevel(_ >= LogLevel.Info)
 
     val reportFatal = (t: Throwable) => {
       t.printStackTrace()
@@ -99,7 +96,7 @@ private[zio] trait RuntimeConfigPlatformSpecific {
       fatal,
       reportFatal,
       supervisor,
-      loggers,
+      logger,
       RuntimeConfigFlags.empty + RuntimeConfigFlag.EnableFiberRoots
     )
   }

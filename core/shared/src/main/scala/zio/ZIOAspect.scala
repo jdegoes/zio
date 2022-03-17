@@ -1,7 +1,7 @@
 package zio
 
 import zio.stacktracer.TracingImplicits.disableAutoTrace
-
+import zio.metrics.{ZIOMetric, MetricLabel}
 import scala.concurrent.ExecutionContext
 
 trait ZIOAspect[+LowerR, -UpperR, +LowerE, -UpperE, +LowerA, -UpperA] { self =>
@@ -54,9 +54,43 @@ trait ZIOAspect[+LowerR, -UpperR, +LowerE, -UpperE, +LowerA, -UpperA] { self =>
       )(implicit trace: ZTraceElement): ZIO[R, E, A] =
         that(self(zio))
     }
+
+  /**
+   * Returns a new aspect that flips the behavior it applies to error and
+   * success channels. If the old aspect affected success values in some way,
+   * then the new aspect will affect error values in the same way.
+   */
+  def flip: ZIOAspect[LowerR, UpperR, LowerA, UpperA, LowerE, UpperE] =
+    new ZIOAspect[LowerR, UpperR, LowerA, UpperA, LowerE, UpperE] {
+      def apply[R >: LowerR <: UpperR, E >: LowerA <: UpperA, A >: LowerE <: UpperE](zio: ZIO[R, E, A])(implicit
+        trace: ZTraceElement
+      ): ZIO[R, E, A] = self(zio.flip).flip
+    }
 }
 
 object ZIOAspect {
+
+  /**
+   * An aspect that annotates each log in this effect with the specified log
+   * annotation.
+   */
+  def annotated(key: String, value: String): ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] =
+    new ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] {
+      def apply[R, E, A](zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
+        ZIO.logAnnotate(key, value)(zio)
+    }
+
+  /**
+   * An aspect that annotates each log in this effect with the specified log
+   * annotations.
+   */
+  def annotated(annotations: (String, String)*): ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] =
+    new ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] {
+      def apply[R, E, A](zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
+        annotations.foldLeft(zio) { case (zio, (key, value)) =>
+          ZIO.logAnnotate(key, value)(zio)
+        }
+    }
 
   /**
    * An aspect that prints the results of effects to the console for debugging
@@ -75,7 +109,7 @@ object ZIOAspect {
     new ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] {
       def apply[R, E, A](zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
         ZIO.runtimeConfig.flatMap { runtimeConfig =>
-          zio.withRuntimeConfig(runtimeConfig.copy(loggers = ZLogger.none.toSet))
+          zio.withRuntimeConfig(runtimeConfig.copy(logger = ZLogger.none))
         }
     }
 
@@ -169,6 +203,16 @@ object ZIOAspect {
     new ZIOAspect[Nothing, R1, Nothing, E1, Nothing, Any] {
       def apply[R <: R1, E <: E1, A](zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
         zio.retry(schedule)
+    }
+
+  /**
+   * An aspect that runs effects with the runtime configuration modified with
+   * the specified `RuntimeConfigAspect`.
+   */
+  def runtimeConfig(runtimeConfigAspect: RuntimeConfigAspect): ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] =
+    new ZIOAspect[Nothing, Any, Nothing, Any, Nothing, Any] {
+      def apply[R, E, A](zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
+        ZIO.runtimeConfig.flatMap(runtimeConfig => zio.withRuntimeConfig(runtimeConfigAspect(runtimeConfig)))
     }
 
   /**

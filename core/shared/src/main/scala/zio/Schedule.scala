@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2018-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -618,11 +618,14 @@ trait Schedule[-Env, -In, +Out] extends Serializable { self =>
    * this schedule.
    */
   def jittered(implicit trace: ZTraceElement): Schedule.WithState[self.State, Env with Random, In, Out] =
-    jittered(0.0, 1.0)
+    jittered(0.8, 1.2)
 
   /**
    * Returns a new schedule that randomly modifies the size of the intervals of
    * this schedule.
+   *
+   * The new interval size is between `min * old interval size` and `max * old
+   * interval size`.
    */
   def jittered(min: Double, max: Double)(implicit
     trace: ZTraceElement
@@ -757,6 +760,16 @@ trait Schedule[-Env, -In, +Out] extends Serializable { self =>
       ): ZIO[Any, Nothing, (State, Out, Decision)] =
         self.step(now, in, state).provideEnvironment(env)
     }
+
+  /**
+   * Returns a new schedule with the single service it requires provided to it.
+   * If the schedule requires multiple services use `provideEnvironment`
+   * instead.
+   */
+  def provideService[Service <: Env](
+    service: Service
+  )(implicit tag: Tag[Service]): Schedule.WithState[self.State, Any, In, Out] =
+    provideEnvironment(ZEnvironment(service))
 
   /**
    * Transforms the environment being provided to this schedule with the

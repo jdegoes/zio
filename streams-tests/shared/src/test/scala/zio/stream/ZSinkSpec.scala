@@ -108,14 +108,14 @@ object ZSinkSpec extends ZIOBaseSpec {
           test("happy path")(
             assertM(
               ZStream(1, 2, 3, 4, 5, 1, 2, 3, 4, 5)
-                .dropWhileZIO(x => UIO(x < 3))
+                .dropWhileZIO(x => ZIO.succeed(x < 3))
                 .runCollect
             )(equalTo(Chunk(3, 4, 5, 1, 2, 3, 4, 5)))
           ),
           test("error")(
             assertM {
               (ZStream(1, 2, 3) ++ ZStream.fail("Aie") ++ ZStream(5, 1, 2, 3, 4, 5))
-                .pipeThrough(ZSink.dropWhileZIO[Any, String, Int](x => UIO(x < 3)))
+                .pipeThrough(ZSink.dropWhileZIO[Any, String, Int](x => ZIO.succeed(x < 3)))
                 .either
                 .runCollect
             }(equalTo(Chunk(Right(3), Left("Aie"))))
@@ -566,14 +566,14 @@ object ZSinkSpec extends ZIOBaseSpec {
 
             override def capacity: Int = q.capacity
 
-            override def isShutdown(implicit trace: ZTraceElement): UIO[Boolean] = UIO(this.isShutDown)
+            override def isShutdown(implicit trace: ZTraceElement): UIO[Boolean] = ZIO.succeed(this.isShutDown)
 
             override def offer(a: A)(implicit trace: ZTraceElement): ZIO[Any, Nothing, Boolean] = q.offer(a)
 
             override def offerAll(as: Iterable[A])(implicit trace: ZTraceElement): ZIO[Any, Nothing, Boolean] =
               q.offerAll(as)
 
-            override def shutdown(implicit trace: ZTraceElement): UIO[Unit] = UIO(this.isShutDown = true)
+            override def shutdown(implicit trace: ZTraceElement): UIO[Unit] = ZIO.succeed(this.isShutDown = true)
 
             override def size(implicit trace: ZTraceElement): UIO[Int] = q.size
 
@@ -669,6 +669,32 @@ object ZSinkSpec extends ZIOBaseSpec {
               equalTo(Some(1))
             )
           })
+        ),
+        suite("splitWhere")(
+          test("should split a stream on predicate and run each part into the sink") {
+            val in = ZStream(1, 2, 3, 4, 5, 6, 7, 8)
+            for {
+              res <- in.via(ZPipeline.fromSink(ZSink.collectAll[Int].splitWhere[Int](_ % 2 == 0))).runCollect
+            } yield {
+              assertTrue(res == Chunk(Chunk(1), Chunk(2, 3), Chunk(4, 5), Chunk(6, 7), Chunk(8)))
+            }
+          },
+          test("should split a stream on predicate and run each part into the sink, in several chunks") {
+            val in = ZStream.fromChunks(Chunk(1, 2, 3, 4), Chunk(5, 6, 7, 8))
+            for {
+              res <- in.via(ZPipeline.fromSink(ZSink.collectAll[Int].splitWhere[Int](_ % 2 == 0))).runCollect
+            } yield {
+              assertTrue(res == Chunk(Chunk(1), Chunk(2, 3), Chunk(4, 5), Chunk(6, 7), Chunk(8)))
+            }
+          },
+          test("not yield an empty sink if split on the first element") {
+            val in = ZStream(1, 2, 3, 4, 5, 6, 7, 8)
+            for {
+              res <- in.via(ZPipeline.fromSink(ZSink.collectAll[Int].splitWhere[Int](_ % 2 != 0))).runCollect
+            } yield {
+              assertTrue(res == Chunk(Chunk(1, 2), Chunk(3, 4), Chunk(5, 6), Chunk(7, 8)))
+            }
+          }
         ),
         test("untilOutputZIO with head sink") {
           val sink: ZSink[Any, Nothing, Int, Int, Option[Option[Int]]] =

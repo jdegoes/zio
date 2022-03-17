@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,10 +53,10 @@ trait Console extends Serializable {
 object Console extends Serializable {
 
   val any: ZLayer[Console, Nothing, Console] =
-    ZLayer.service[Console](Tag[Console], IsNotIntersection[Console], Tracer.newTrace)
+    ZLayer.service[Console](Tag[Console], Tracer.newTrace)
 
   val live: Layer[Nothing, Console] =
-    ZLayer.succeed[Console](ConsoleLive)(Tag[Console], IsNotIntersection[Console], Tracer.newTrace)
+    ZLayer.succeed[Console](ConsoleLive)(Tag[Console], Tracer.newTrace)
 
   object ConsoleLive extends Console {
 
@@ -70,12 +70,12 @@ object Console extends Serializable {
       printLine(SConsole.err)(line)
 
     def readLine(implicit trace: ZTraceElement): IO[IOException, String] =
-      IO.attemptBlockingIO {
+      IO.attemptBlockingInterrupt {
         val line = StdIn.readLine()
 
         if (line ne null) line
         else throw new EOFException("There is no more input left to read")
-      }
+      }.refineToOrDie[IOException]
 
     private def print(stream: => PrintStream)(line: => Any)(implicit trace: ZTraceElement): IO[IOException, Unit] =
       IO.attemptBlockingIO(SConsole.withOut(stream)(SConsole.print(line)))

@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,11 +26,8 @@ final case class RuntimeConfigAspect(customize: RuntimeConfig => RuntimeConfig)
 }
 object RuntimeConfigAspect extends ((RuntimeConfig => RuntimeConfig) => RuntimeConfigAspect) {
 
-  def addLogger[A: Tag](logger: ZLogger[A, Any]): RuntimeConfigAspect =
-    RuntimeConfigAspect(self => self.copy(loggers = self.loggers + logger))
-
-  def addReportFatal(f: Throwable => Nothing): RuntimeConfigAspect =
-    RuntimeConfigAspect(self => self.copy(reportFatal = t => { self.reportFatal(t); f(t) }))
+  def addLogger(logger: ZLogger[String, Any]): RuntimeConfigAspect =
+    RuntimeConfigAspect(self => self.copy(logger = self.logger +> logger))
 
   def addSupervisor(supervisor: Supervisor[Any]): RuntimeConfigAspect =
     RuntimeConfigAspect(self => self.copy(supervisor = self.supervisor ++ supervisor))
@@ -49,6 +46,9 @@ object RuntimeConfigAspect extends ((RuntimeConfig => RuntimeConfig) => RuntimeC
 
   def setExecutor(executor: Executor): RuntimeConfigAspect =
     RuntimeConfigAspect(_.copy(executor = executor))
+
+  def setReportFatal(reportFatal: Throwable => Nothing): RuntimeConfigAspect =
+    RuntimeConfigAspect(self => self.copy(reportFatal = reportFatal))
 
   val superviseOperations: RuntimeConfigAspect =
     RuntimeConfigAspect(self => self.copy(flags = self.flags + RuntimeConfigFlag.SuperviseOperations))

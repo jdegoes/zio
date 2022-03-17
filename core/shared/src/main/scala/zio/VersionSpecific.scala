@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import izumi.reflect.macrortti.LightTypeTagRef
 
 private[zio] trait VersionSpecific {
 
-  type Tag[A] = izumi.reflect.Tag[A]
-  lazy val Tag = izumi.reflect.Tag
+  type EnvironmentTag[A] = izumi.reflect.Tag[A]
+  lazy val EnvironmentTag = izumi.reflect.Tag
 
   type TagK[F[_]] = izumi.reflect.TagK[F]
   lazy val TagK = izumi.reflect.TagK
@@ -59,7 +59,7 @@ private[zio] trait VersionSpecific {
   private[zio] def taggedIsSubtype(left: LightTypeTag, right: LightTypeTag): Boolean =
     left <:< right
 
-  private[zio] def taggedTagType[A](tagged: Tag[A]): LightTypeTag =
+  private[zio] def taggedTagType[A](tagged: EnvironmentTag[A]): LightTypeTag =
     tagged.tag
 
   /**

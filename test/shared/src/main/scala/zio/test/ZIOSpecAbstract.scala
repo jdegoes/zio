@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,11 @@ abstract class ZIOSpecAbstract extends ZIOApp { self =>
   def aspects: Chunk[TestAspectAtLeastR[Environment with TestEnvironment with ZIOAppArgs]] =
     Chunk(TestAspect.fibers)
 
+  def testReporter(testRenderer: TestRenderer, testAnnotationRenderer: TestAnnotationRenderer)(implicit
+    trace: ZTraceElement
+  ): TestReporter[Any] =
+    DefaultTestReporter(testRenderer, testAnnotationRenderer)
+
   final def run: ZIO[ZEnv with ZIOAppArgs, Any, Any] = {
     implicit val trace = Tracer.newTrace
 
@@ -49,11 +54,11 @@ abstract class ZIOSpecAbstract extends ZIOApp { self =>
         self.runSpec.zipPar(that.runSpec)
       def spec: ZSpec[Environment with TestEnvironment with ZIOAppArgs, Any] =
         self.spec + that.spec
-      def tag: Tag[Environment] = {
-        implicit val selfTag: Tag[self.Environment] = self.tag
-        implicit val thatTag: Tag[that.Environment] = that.tag
-        val _                                       = (selfTag, thatTag)
-        Tag[Environment]
+      def tag: EnvironmentTag[Environment] = {
+        implicit val selfTag: EnvironmentTag[self.Environment] = self.tag
+        implicit val thatTag: EnvironmentTag[that.Environment] = that.tag
+        val _                                                  = (selfTag, thatTag)
+        EnvironmentTag[Environment]
       }
     }
 
@@ -77,7 +82,7 @@ abstract class ZIOSpecAbstract extends ZIOApp { self =>
       case "intellij" => IntelliJRenderer
       case _          => TestRenderer.default
     }
-    DefaultTestReporter(renderer, TestAnnotationRenderer.default)
+    testReporter(renderer, TestAnnotationRenderer.default)
   }
 
   private def doExit(exitCode: Int)(implicit trace: ZTraceElement): UIO[Unit] =
@@ -105,12 +110,15 @@ abstract class ZIOSpecAbstract extends ZIOApp { self =>
     val filteredSpec = FilteredSpec(spec, testArgs)
 
     for {
-      env <- ZIO.environment[Environment with TestEnvironment with ZIOAppArgs with TestLogger]
+      runtime      <- ZIO.runtime[Environment with TestEnvironment with ZIOAppArgs with TestLogger]
+      environment   = runtime.environment
+      runtimeConfig = hook(runtime.runtimeConfig)
       runner =
         TestRunner(
           TestExecutor.default[Environment with TestEnvironment with ZIOAppArgs with TestLogger, Any](
-            ZLayer.succeedEnvironment(env) +!+ testEnvironment
-          )
+            ZLayer.succeedEnvironment(environment) +!+ testEnvironment
+          ),
+          runtimeConfig
         )
       testReporter = testArgs.testRenderer.fold(runner.reporter)(createTestReporter)
       results <-

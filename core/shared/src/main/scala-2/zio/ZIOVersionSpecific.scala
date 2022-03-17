@@ -36,7 +36,7 @@ private[zio] trait ZIOVersionSpecific[-R, +E, +A] { self: ZIO[R, E, A] =>
    * }}}
    */
   def provideCustom[E1 >: E](layer: ZLayer[_, E1, _]*): ZIO[ZEnv, E1, A] =
-    macro LayerMacros.provideSomeImpl[ZIO, ZEnv, R, E1, A]
+    macro LayerMacros.provideCustomImpl[ZIO, ZEnv, R, E1, A]
 
   /**
    * Splits the environment into two parts, assembling one part using the
@@ -65,7 +65,7 @@ private final class ProvideSomeLayerPartiallyApplied[R0, -R, +E, +A](val self: Z
 
   def provideLayer[E1 >: E](
     layer: ZLayer[R0, E1, R]
-  )(implicit ev: NeedsEnv[R], trace: ZTraceElement): ZIO[R0, E1, A] =
+  )(implicit trace: ZTraceElement): ZIO[R0, E1, A] =
     self.provideLayer(layer)
 
   def provideSomeLayer[R0]: ZIO.ProvideSomeLayer[R0, R, E, A] =

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 
+import zio.TagVersionSpecific
 import zio.internal.stacktracer.Tracer
 import zio.stacktracer.TracingImplicits.disableAutoTrace
+
+import scala.reflect.ClassTag
 
 package object zio
     extends BuildFromCompat
@@ -36,6 +39,12 @@ package object zio
   type RIO[-R, +A]  = ZIO[R, Throwable, A]   // Succeed with an `A`, may fail with `Throwable`, requires an `R`.
   type UIO[+A]      = ZIO[Any, Nothing, A]   // Succeed with an `A`, cannot fail              , no requirements.
   type URIO[-R, +A] = ZIO[R, Nothing, A]     // Succeed with an `A`, cannot fail              , requires an `R`.
+
+  val IO: ZIO.type   = ZIO
+  val Task: ZIO.type = ZIO
+  val RIO: ZIO.type  = ZIO
+  val UIO: ZIO.type  = ZIO
+  val URIO: ZIO.type = ZIO
 
   type Managed[+E, +A]   = ZManaged[Any, E, A]         //Manage an `A`, may fail with `E`        , no requirements
   type TaskManaged[+A]   = ZManaged[Any, Throwable, A] //Manage an `A`, may fail with `Throwable`, no requirements
@@ -87,6 +96,19 @@ package object zio
   type Semaphore = stm.TSemaphore
 
   type ZTraceElement = Tracer.instance.Type with Tracer.Traced
+
+  trait Tag[A] extends EnvironmentTag[A] {
+    def tag: LightTypeTag
+  }
+
+  object Tag extends TagVersionSpecific {
+    def apply[A](implicit tag0: EnvironmentTag[A], isNotIntersection: IsNotIntersection[A]): Tag[A] =
+      new Tag[A] {
+        def tag: zio.LightTypeTag = tag0.tag
+
+        override def closestClass: Class[_] = tag0.closestClass
+      }
+  }
 
   trait IsNotIntersection[A] extends Serializable
 

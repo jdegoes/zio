@@ -351,9 +351,19 @@ object ChunkSpec extends ZIOBaseSpec {
     test("drop chunk") {
       check(largeChunks(intGen), intGen)((chunk, n) => assert(chunk.drop(n).toList)(equalTo(chunk.toList.drop(n))))
     },
+    test("dropRight chunk") {
+      check(largeChunks(intGen), intGen)((chunk, n) =>
+        assert(chunk.dropRight(n).toList)(equalTo(chunk.toList.dropRight(n)))
+      )
+    },
     test("take chunk") {
       check(chunkWithIndex(Gen.unit)) { case (c, n) =>
         assert(c.take(n).toList)(equalTo(c.toList.take(n)))
+      }
+    },
+    test("takeRight chunk") {
+      check(chunkWithIndex(Gen.unit)) { case (c, n) =>
+        assert(c.takeRight(n).toList)(equalTo(c.toList.takeRight(n)))
       }
     },
     test("dropWhile chunk") {
@@ -702,6 +712,18 @@ object ChunkSpec extends ZIOBaseSpec {
       test("fails if the chunk does not contain the specified index") {
         val chunk = Chunk(1, 2, 3)
         assert(chunk.updated(3, 4))(throwsA[IndexOutOfBoundsException])
+      },
+      test("apply") {
+        val chunk = Chunk.fill(256)(1).foldLeft(Chunk(0)) { case (as, a) =>
+          as.updated(0, as(0) + a)
+        }
+        assertTrue(chunk(0) == 256)
+      },
+      test("buffer size") {
+        val chunk = Chunk.fill(257)(1).zipWithIndex.foldLeft(Chunk.fill(256)(0)) { case (as, (a, i)) =>
+          as.updated(i % 256, as(i % 256) + a)
+        }
+        assertTrue(chunk.sum == 257)
       }
     )
   )

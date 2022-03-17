@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,6 +86,7 @@ import scala.collection.immutable.SortedSet
  */
 trait TestClock extends Clock with Restorable {
   def adjust(duration: Duration)(implicit trace: ZTraceElement): UIO[Unit]
+  def adjustWith[R, E, A](duration: Duration)(zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A]
   def setDateTime(dateTime: OffsetDateTime)(implicit trace: ZTraceElement): UIO[Unit]
   def setTime(duration: Duration)(implicit trace: ZTraceElement): UIO[Unit]
   def setTimeZone(zone: ZoneId)(implicit trace: ZTraceElement): UIO[Unit]
@@ -112,6 +113,14 @@ object TestClock extends Serializable {
      */
     def adjust(duration: Duration)(implicit trace: ZTraceElement): UIO[Unit] =
       warningDone *> run(_ + duration)
+
+    /**
+     * Increments the current clock time by the specified duration. Any effects
+     * that were scheduled to occur on or before the new time will be run in
+     * order.
+     */
+    def adjustWith[R, E, A](duration: Duration)(zio: ZIO[R, E, A])(implicit trace: ZTraceElement): ZIO[R, E, A] =
+      zio <& adjust(duration)
 
     /**
      * Returns the current clock time as an `OffsetDateTime`.
@@ -254,9 +263,9 @@ object TestClock extends Serializable {
       supervisedFibers.flatMap { fibers =>
         ZIO.foldLeft(fibers)(Map.empty[FiberId, Fiber.Status]) { (map, fiber) =>
           fiber.status.flatMap {
-            case done @ Fiber.Status.Done                          => ZIO.succeedNow(map + (fiber.id -> done))
-            case suspended @ Fiber.Status.Suspended(_, _, _, _, _) => ZIO.succeedNow(map + (fiber.id -> suspended))
-            case _                                                 => ZIO.fail(())
+            case done @ Fiber.Status.Done => ZIO.succeedNow(map + (fiber.id -> done))
+            // case suspended @ Fiber.Status.Suspended(_, _, _, _, _) => ZIO.succeedNow(map + (fiber.id -> suspended))
+            case _ => ZIO.fail(())
           }
         }
       }
@@ -376,9 +385,10 @@ object TestClock extends Serializable {
         warningState          <- Ref.Synchronized.make(WarningData.start).toManaged
         suspendedWarningState <- Ref.Synchronized.make(SuspendedWarningData.start).toManaged
         test <-
-          Managed.acquireReleaseWith(UIO(Test(clockState, live, annotations, warningState, suspendedWarningState))) {
-            test =>
-              test.warningDone *> test.suspendedWarningDone
+          Managed.acquireReleaseWith(
+            ZIO.succeed(Test(clockState, live, annotations, warningState, suspendedWarningState))
+          ) { test =>
+            test.warningDone *> test.suspendedWarningDone
           }
       } yield test
     }
@@ -396,6 +406,11 @@ object TestClock extends Serializable {
    */
   def adjust(duration: => Duration)(implicit trace: ZTraceElement): URIO[TestClock, Unit] =
     ZIO.serviceWithZIO(_.adjust(duration))
+
+  def adjustWith[R, E, A](duration: => Duration)(zio: ZIO[R, E, A])(implicit
+    trace: ZTraceElement
+  ): ZIO[R with TestClock, E, A] =
+    ZIO.serviceWithZIO[TestClock](_.adjustWith(duration)(zio))
 
   /**
    * Accesses a `TestClock` instance in the environment and saves the clock

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ trait CompileVariants {
   final def typeCheck(code: String): UIO[Either[String, Unit]] =
     macro Macros.typeCheck_impl
 
-  private[test] def assertImpl[A](
+  private[zio] def assertImpl[A](
     value: => A,
     expression: Option[String] = None
   )(assertion: Assertion[A])(implicit trace: ZTraceElement): TestResult

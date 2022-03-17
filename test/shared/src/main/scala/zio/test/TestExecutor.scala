@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package zio.test
 
-import zio.{ExecutionStrategy, Layer, UIO, ZIO, ZManaged, ZTraceElement}
+import zio._
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 /**
@@ -34,7 +34,7 @@ object TestExecutor {
   ): TestExecutor[R, E] = new TestExecutor[R, E] {
     def run(spec: ZSpec[R, E], defExec: ExecutionStrategy)(implicit trace: ZTraceElement): UIO[ExecutedSpec[E]] =
       spec.annotated
-        .provideLayer(environment)
+        .provideLayer(ZTestLogger.default >>> environment)
         .foreachExec(defExec)(
           e =>
             e.failureOrCause.fold(

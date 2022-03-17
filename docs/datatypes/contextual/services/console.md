@@ -15,7 +15,7 @@ The Console service contains simple I/O operations for reading/writing strings f
 
 All functions of the Console service are effectful, this means they are just descriptions of reading/writing from/to the console. 
 
-As ZIO data type support monadic operations, we can compose these functions with for-comprehension which helps us to write our program pretty much like an imperative program:
+As ZIO data type supports monadic operations, we can compose these functions with for-comprehension which helps us to write our program pretty much like an imperative program:
 
 ```scala mdoc:compile-only
 import java.io.IOException
@@ -25,9 +25,9 @@ import zio.Console._
 
 object MyHelloApp extends ZIOAppDefault {
   val program: ZIO[Console, IOException, Unit] = for {
-    _ <- printLine("Hello, what is you name?")
+    _    <- printLine("Hello, what is you name?")
     name <- readLine
-    _ <- printLine(s"Hello $name, welcome to ZIO!")
+    _    <- printLine(s"Hello $name, welcome to ZIO!")
   } yield ()
 
   def run = program

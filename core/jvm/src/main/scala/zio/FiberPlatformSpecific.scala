@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,12 +43,12 @@ private[zio] trait FiberPlatformSpecific {
           }
         }
 
-      final def getRef[A](ref: FiberRef.Runtime[A])(implicit trace: ZTraceElement): UIO[A] = UIO(ref.initial)
+      final def getRef[A](ref: FiberRef.Runtime[A])(implicit trace: ZTraceElement): UIO[A] = ZIO.succeed(ref.initial)
 
       def id: FiberId = FiberId.None
 
-      final def interruptAs(id: FiberId)(implicit trace: ZTraceElement): UIO[Exit[Throwable, A]] =
-        join.fold(Exit.fail, Exit.succeed)
+      final def interruptAs(id: Fiber.Id)(implicit trace: ZTraceElement): UIO[Exit[Throwable, A]] =
+        ZIO.succeed(cs.toCompletableFuture.cancel(false)) *> join.fold(Exit.fail, Exit.succeed)
 
       final def inheritRefs(implicit trace: ZTraceElement): UIO[Unit] = IO.unit
     }
@@ -80,12 +80,12 @@ private[zio] trait FiberPlatformSpecific {
           }
         }
 
-      def getRef[A](ref: FiberRef.Runtime[A])(implicit trace: ZTraceElement): UIO[A] = UIO(ref.initial)
+      def getRef[A](ref: FiberRef.Runtime[A])(implicit trace: ZTraceElement): UIO[A] = ZIO.succeed(ref.initial)
 
       def id: FiberId = FiberId.None
 
-      def interruptAs(id: FiberId)(implicit trace: ZTraceElement): UIO[Exit[Throwable, A]] =
-        join.fold(Exit.fail, Exit.succeed)
+      def interruptAs(id: Fiber.Id)(implicit trace: ZTraceElement): UIO[Exit[Throwable, A]] =
+        ZIO.succeed(ftr.cancel(false)) *> join.fold(Exit.fail, Exit.succeed)
 
       def inheritRefs(implicit trace: ZTraceElement): UIO[Unit] = UIO.unit
     }

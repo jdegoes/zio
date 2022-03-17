@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,8 +61,8 @@ private[zio] trait RuntimeConfigPlatformSpecific {
 
     val fatal = (t: Throwable) => t.isInstanceOf[VirtualMachineError]
 
-    val loggers =
-      ZLogger.Set.default.map(println(_)).filterLogLevel(_ >= LogLevel.Info)
+    val logger =
+      ZLogger.default.map(println(_)).filterLogLevel(_ >= LogLevel.Info)
 
     val reportFatal = (t: Throwable) => {
       t.printStackTrace()
@@ -80,7 +80,7 @@ private[zio] trait RuntimeConfigPlatformSpecific {
       fatal,
       reportFatal,
       supervisor,
-      loggers,
+      logger,
       RuntimeConfigFlags.empty + RuntimeConfigFlag.EnableFiberRoots
     )
   }

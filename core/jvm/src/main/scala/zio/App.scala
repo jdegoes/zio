@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,5 +39,5 @@ import zio.stacktracer.TracingImplicits.disableAutoTrace
  * }
  * }}}
  */
-@deprecated("2.0.0", "Use zio.ZIOAppDefault")
+@deprecated("Use zio.ZIOAppDefault", "2.0.0")
 trait App extends ZApp[ZEnv] with BootstrapRuntime

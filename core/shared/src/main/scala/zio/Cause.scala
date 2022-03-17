@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -515,7 +515,7 @@ sealed abstract class Cause[+E] extends Product with Serializable { self =>
       }
 
       def unifyInterrupt(interrupt: Cause.Interrupt): Unified = {
-        val message = "Interrupted by thread \"" + fiberId.threadName + "\""
+        val message = "Interrupted by thread \"" + interrupt.fiberId.threadName + "\""
 
         Unified(interrupt.trace.fiberId, classOf[InterruptedException].getName(), message, interrupt.trace.toJava)
       }

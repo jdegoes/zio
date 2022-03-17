@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2018-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +53,8 @@ sealed abstract class Chunk[+A] extends ChunkLike[A] with Serializable { self =>
       case (self, Chunk.PrependN(end, buffer, bufferUsed, _)) =>
         val chunk = Chunk.fromArray(buffer.asInstanceOf[Array[A1]]).takeRight(bufferUsed)
         self ++ chunk ++ end
+      case (self, Chunk.Empty) => self
+      case (Chunk.Empty, that) => that
       case (self, that) =>
         val diff = that.depth - self.depth
         if (math.abs(diff) <= 1) Chunk.Concat(self, that)
@@ -199,11 +201,23 @@ sealed abstract class Chunk[+A] extends ChunkLike[A] with Serializable { self =>
     else if (n >= len) Chunk.empty
     else
       self match {
-        case Chunk.Slice(c, o, l)        => Chunk.Slice(c, o + n, l - n)
-        case Chunk.Singleton(_) if n > 0 => Chunk.empty
-        case c @ Chunk.Singleton(_)      => c
-        case Chunk.Empty                 => Chunk.empty
-        case _                           => Chunk.Slice(self, n, len - n)
+        case Chunk.Slice(c, o, l) => Chunk.Slice(c, o + n, l - n)
+        case _                    => Chunk.Slice(self, n, len - n)
+      }
+  }
+
+  /**
+   * Drops the last `n` elements of the chunk.
+   */
+  override def dropRight(n: Int): Chunk[A] = {
+    val len = self.length
+
+    if (n <= 0) self
+    else if (n >= len) Chunk.empty
+    else
+      self match {
+        case Chunk.Slice(c, o, l) => Chunk.Slice(c, o, l - n)
+        case _                    => Chunk.Slice(self, 0, len - n)
       }
   }
 
@@ -241,7 +255,7 @@ sealed abstract class Chunk[+A] extends ChunkLike[A] with Serializable { self =>
         val a = iterator.nextAt(index)
         index += 1
         dropping = dropping.flatMap { d =>
-          (if (d) p(a) else UIO(false)).map {
+          (if (d) p(a) else ZIO.succeed(false)).map {
             case true =>
               true
             case false =>
@@ -751,12 +765,20 @@ sealed abstract class Chunk[+A] extends ChunkLike[A] with Serializable { self =>
     else if (n >= length) this
     else
       self match {
-        case Chunk.Empty => Chunk.Empty
-        case Chunk.Slice(c, o, l) =>
-          if (n >= l) this
-          else Chunk.Slice(c, o, n)
-        case c @ Chunk.Singleton(_) => c
-        case _                      => Chunk.Slice(self, 0, n)
+        case Chunk.Slice(c, o, _) => Chunk.Slice(c, o, n)
+        case _                    => Chunk.Slice(self, 0, n)
+      }
+
+  /**
+   * Takes the last `n` elements of the chunk.
+   */
+  override def takeRight(n: Int): Chunk[A] =
+    if (n <= 0) Chunk.Empty
+    else if (n >= length) this
+    else
+      self match {
+        case Chunk.Slice(c, o, l) => Chunk.Slice(c, o + l - n, n)
+        case _                    => Chunk.Slice(self, length - n, n)
       }
 
   /**
@@ -799,7 +821,7 @@ sealed abstract class Chunk[+A] extends ChunkLike[A] with Serializable { self =>
         val a = iterator.nextAt(index)
         index += 1
         taking = taking.flatMap { b =>
-          (if (b) p(a) else UIO(false)).map {
+          (if (b) p(a) else ZIO.succeed(false)).map {
             case true =>
               builder += a
               true
@@ -1356,7 +1378,7 @@ object Chunk extends ChunkFactory with ChunkPlatformSpecific {
       chunk.length
 
     def apply(i: Int): A = {
-      var j = used
+      var j = used - 1
       var a = null.asInstanceOf[A]
       while (j >= 0) {
         if (bufferIndices(j) == i) {
@@ -1380,7 +1402,7 @@ object Chunk extends ChunkFactory with ChunkPlatformSpecific {
         val bufferValues  = Array.ofDim[AnyRef](UpdateBufferSize)
         bufferIndices(0) = i
         bufferValues(0) = a.asInstanceOf[AnyRef]
-        val array = chunk.asInstanceOf[Chunk[AnyRef]].toArray
+        val array = self.asInstanceOf[Chunk[AnyRef]].toArray
         Update(Chunk.fromArray(array.asInstanceOf[Array[A1]]), bufferIndices, bufferValues, 1, new AtomicInteger(1))
       }
 

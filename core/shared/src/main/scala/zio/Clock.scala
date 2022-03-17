@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2017-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ trait Clock extends Serializable {
 object Clock extends ClockPlatformSpecific with Serializable {
 
   val any: ZLayer[Clock, Nothing, Clock] =
-    ZLayer.service[Clock](Tag[Clock], IsNotIntersection[Clock], Tracer.newTrace)
+    ZLayer.service[Clock](Tag[Clock], Tracer.newTrace)
 
   /**
    * Constructs a `Clock` service from a `java.time.Clock`.
@@ -188,7 +188,7 @@ object Clock extends ClockPlatformSpecific with Serializable {
   }
 
   val live: Layer[Nothing, Clock] =
-    ZLayer.succeed[Clock](ClockLive)(Tag[Clock], IsNotIntersection[Clock], Tracer.newTrace)
+    ZLayer.succeed[Clock](ClockLive)(Tag[Clock], Tracer.newTrace)
 
   /**
    * An implementation of the `Clock` service backed by a `java.time.Clock`.

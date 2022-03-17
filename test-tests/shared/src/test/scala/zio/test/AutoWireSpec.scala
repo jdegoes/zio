@@ -25,17 +25,18 @@ object AutoWireSpec extends ZIOBaseSpec {
           test("automatically constructs a layer") {
             val program = ZIO.environment[ZEnv] *> ZIO.service[Int]
             assertM(program)(equalTo(128))
-          }.provideCustom(doubleLayer, stringLayer, intLayer)
+          }
+            .provideCustom(doubleLayer, stringLayer, intLayer)
         },
         test("reports missing top-level dependencies") {
-          val program: URIO[String with Int, String] = UIO("test")
+          val program: URIO[String with Int, String] = ZIO.succeed("test")
           val _                                      = program
           val checked =
             typeCheck("""test("foo")(assertM(program)(anything)).provide(ZLayer.succeed(3))""")
           assertM(checked)(isLeft(containsStringWithoutAnsi("String")))
         } @@ TestAspect.exceptScala3,
         test("reports multiple missing top-level dependencies") {
-          val program: URIO[String with Int, String] = UIO("test")
+          val program: URIO[String with Int, String] = ZIO.succeed("test")
           val _                                      = program
 
           val checked = typeCheck("""test("foo")(assertM(program)(anything)).provide()""")
@@ -145,20 +146,32 @@ object AutoWireSpec extends ZIOBaseSpec {
           )
         ).provideSomeShared[Random](refLayer) @@ TestAspect.sequential
       },
-      suite(".provideSome") {
+      suite(".provideSome")(
         test("automatically constructs a layer, leaving off TestEnvironment") {
           for {
             result <- ZIO.service[String].zipWith(Random.nextInt)((str, int) => s"$str $int")
           } yield assertTrue(result == "Your Lucky Number is -1295463240")
-        }.provideSome[Random](ZLayer.succeed("Your Lucky Number is"))
-      },
-      suite(".provideCustom") {
+        }.provideSome[Random](ZLayer.succeed("Your Lucky Number is")),
+        test("gives precedence to provided layers") {
+          Console.printLine("Hello") *>
+            Random.nextInt.map { i =>
+              assertTrue(i == 1094383425)
+            }
+        }.provideSome[Console](TestRandom.make(TestRandom.Data(10, 10)))
+      ),
+      suite(".provideCustom")(
         test("automatically constructs a layer, leaving off TestEnvironment") {
           for {
             result <- ZIO.service[String].zipWith(Random.nextInt)((str, int) => s"$str $int")
           } yield assertTrue(result == "Your Lucky Number is -1295463240")
-        }.provideCustom(ZLayer.succeed("Your Lucky Number is"))
-      } @@ TestAspect.exceptScala3
+        }.provideCustom(ZLayer.succeed("Your Lucky Number is")),
+        test("gives precedence to provided layers") {
+          Console.printLine("Hello") *>
+            Random.nextInt.map { i =>
+              assertTrue(i == 1094383425)
+            }
+        }.provideCustom(TestRandom.make(TestRandom.Data(10, 10)))
+      ) @@ TestAspect.exceptScala3
     )
 
   object TestLayer {
@@ -168,7 +181,7 @@ object AutoWireSpec extends ZIOBaseSpec {
 
     object OldLady {
       def live: URLayer[Fly, OldLady] = ZLayer.succeed(new OldLady {
-        override def willDie: UIO[Boolean] = UIO(false)
+        override def willDie: UIO[Boolean] = ZIO.succeed(false)
       })
     }
 

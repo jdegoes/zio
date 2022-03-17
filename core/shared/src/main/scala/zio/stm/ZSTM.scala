@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -560,6 +560,15 @@ sealed trait ZSTM[-R, +E, +A] extends Serializable { self =>
     provideSomeEnvironment(_ => r)
 
   /**
+   * Provides the transaction with the single service it requires. If the
+   * transaction requires multiple services use `provideEnvironment` instead.
+   */
+  def provideService[Service <: R](
+    service: Service
+  )(implicit tag: Tag[Service]): STM[E, A] =
+    provideEnvironment(ZEnvironment(service))
+
+  /**
    * Transforms the environment being provided to this effect with the specified
    * function.
    */
@@ -844,6 +853,8 @@ sealed trait ZSTM[-R, +E, +A] extends Serializable { self =>
     self flatMap (a => that map (b => f(a, b)))
 
   private def run(journal: Journal, fiberId: FiberId, r0: ZEnvironment[R]): TExit[E, A] = {
+    import internal._
+
     type Erased = ZSTM[Any, Any, Any]
     type Cont   = Any => Erased
 
@@ -851,6 +862,7 @@ sealed trait ZSTM[-R, +E, +A] extends Serializable { self =>
     val envStack  = Stack[ZEnvironment[Any]](r0)
     var exit      = null.asInstanceOf[TExit[Any, Any]]
     var curr      = self.asInstanceOf[Erased]
+    var opCount   = 0
 
     def unwindStack(error: Any, isRetry: Boolean): Erased = {
       var result = null.asInstanceOf[Erased]
@@ -867,66 +879,73 @@ sealed trait ZSTM[-R, +E, +A] extends Serializable { self =>
     }
 
     while (exit eq null) {
-      (curr.tag: @annotation.switch) match {
-        case Tags.Effect =>
-          try {
-            val effect = curr.asInstanceOf[Effect[Any, Any, Any]]
-            val a      = effect.f(journal, fiberId, envStack.peek())
+      if (opCount == YieldOpCount) {
+        if (isInvalid(journal)) exit = TExit.Retry
+        else opCount = 0
+      } else {
+        (curr.tag: @annotation.switch) match {
+          case Tags.Effect =>
+            try {
+              val effect = curr.asInstanceOf[Effect[Any, Any, Any]]
+              val a      = effect.f(journal, fiberId, envStack.peek())
+
+              if (contStack.isEmpty) exit = TExit.Succeed(a) else curr = contStack.pop()(a)
+            } catch {
+              case ZSTM.RetryException =>
+                curr = unwindStack(null, true)
+
+                if (curr eq null) exit = TExit.Retry
+
+              case ZSTM.FailException(e) =>
+                curr = unwindStack(e, false)
+
+                if (curr eq null) exit = TExit.Fail(e)
+
+              case ZSTM.DieException(t) =>
+                curr = unwindStack(t, false)
+
+                if (curr eq null) exit = TExit.Die(t)
+
+              case ZSTM.InterruptException(fiberId) =>
+                exit = TExit.Interrupt(fiberId)
+            }
+
+          case Tags.OnSuccess =>
+            val onSuccess = curr.asInstanceOf[OnSuccess[Any, Any, Any, Any]]
+            contStack.push(onSuccess.k)
+            curr = onSuccess.stm
+
+          case Tags.OnFailure =>
+            val onFailure = curr.asInstanceOf[OnFailure[Any, Any, Any, Any]]
+            contStack.push(onFailure)
+            curr = onFailure.stm
+
+          case Tags.OnRetry =>
+            val onRetry = curr.asInstanceOf[OnRetry[Any, Any, Any]]
+            contStack.push(onRetry)
+            curr = onRetry.stm
+
+          case Tags.Provide =>
+            val provide = curr.asInstanceOf[Provide[Any, Any, Any, Any]]
+
+            envStack.push(provide.f.asInstanceOf[ZEnvironment[Any] => ZEnvironment[Any]](envStack.peek()))
+
+            val cleanup = ZSTM.succeed(envStack.pop())
+
+            curr = provide.effect.ensuring(cleanup).asInstanceOf[Erased]
+
+          case Tags.SucceedNow =>
+            val a = curr.asInstanceOf[SucceedNow[Any]].a
 
             if (contStack.isEmpty) exit = TExit.Succeed(a) else curr = contStack.pop()(a)
-          } catch {
-            case ZSTM.RetryException =>
-              curr = unwindStack(null, true)
 
-              if (curr eq null) exit = TExit.Retry
+          case Tags.Succeed =>
+            val a = curr.asInstanceOf[Succeed[Any]].a()
 
-            case ZSTM.FailException(e) =>
-              curr = unwindStack(e, false)
+            if (contStack.isEmpty) exit = TExit.Succeed(a) else curr = contStack.pop()(a)
+        }
 
-              if (curr eq null) exit = TExit.Fail(e)
-
-            case ZSTM.DieException(t) =>
-              curr = unwindStack(t, false)
-
-              if (curr eq null) exit = TExit.Die(t)
-
-            case ZSTM.InterruptException(fiberId) =>
-              exit = TExit.Interrupt(fiberId)
-          }
-
-        case Tags.OnSuccess =>
-          val onSuccess = curr.asInstanceOf[OnSuccess[Any, Any, Any, Any]]
-          contStack.push(onSuccess.k)
-          curr = onSuccess.stm
-
-        case Tags.OnFailure =>
-          val onFailure = curr.asInstanceOf[OnFailure[Any, Any, Any, Any]]
-          contStack.push(onFailure)
-          curr = onFailure.stm
-
-        case Tags.OnRetry =>
-          val onRetry = curr.asInstanceOf[OnRetry[Any, Any, Any]]
-          contStack.push(onRetry)
-          curr = onRetry.stm
-
-        case Tags.Provide =>
-          val provide = curr.asInstanceOf[Provide[Any, Any, Any, Any]]
-
-          envStack.push(provide.f.asInstanceOf[ZEnvironment[Any] => ZEnvironment[Any]](envStack.peek()))
-
-          val cleanup = ZSTM.succeed(envStack.pop())
-
-          curr = provide.effect.ensuring(cleanup).asInstanceOf[Erased]
-
-        case Tags.SucceedNow =>
-          val a = curr.asInstanceOf[SucceedNow[Any]].a
-
-          if (contStack.isEmpty) exit = TExit.Succeed(a) else curr = contStack.pop()(a)
-
-        case Tags.Succeed =>
-          val a = curr.asInstanceOf[Succeed[Any]].a()
-
-          if (contStack.isEmpty) exit = TExit.Succeed(a) else curr = contStack.pop()(a)
+        opCount += 1
       }
     }
 
@@ -973,12 +992,7 @@ object ZSTM {
     ZIO.environmentWithZIO[R] { r =>
       ZIO.suspendSucceedWith { (runtimeConfig, fiberId) =>
         tryCommitSync(runtimeConfig, fiberId, stm, r) match {
-          case TryCommit.Done(exit) =>
-            exit match {
-              case Exit.Success(value) => ZIO.succeedNow(value)
-              case Exit.Failure(cause) => throw new ZIO.ZioError(cause, trace)
-            }
-
+          case TryCommit.Done(exit) => throw new ZIO.ZioError(exit, trace)
           case TryCommit.Suspend(journal) =>
             val txnId = makeTxnId()
             val state = new AtomicReference[State[E, A]](State.Running)
@@ -1530,7 +1544,7 @@ object ZSTM {
   /**
    * Accesses the specified service in the environment of the effect.
    */
-  def service[A: Tag: IsNotIntersection]: ZSTM[A, Nothing, A] =
+  def service[A: Tag]: ZSTM[A, Nothing, A] =
     ZSTM.environmentWith(_.get[A])
 
   /**
@@ -1543,15 +1557,14 @@ object ZSTM {
    * Accesses the specified services in the environment of the effect.
    */
   @deprecated("use service", "2.0.0")
-  def services[A: Tag: IsNotIntersection, B: Tag: IsNotIntersection]: ZSTM[A with B, Nothing, (A, B)] =
+  def services[A: Tag, B: Tag]: ZSTM[A with B, Nothing, (A, B)] =
     ZSTM.access(r => (r.get[A], r.get[B]))
 
   /**
    * Accesses the specified services in the environment of the effect.
    */
   @deprecated("use service", "2.0.0")
-  def services[A: Tag: IsNotIntersection, B: Tag: IsNotIntersection, C: Tag: IsNotIntersection]
-    : ZSTM[A with B with C, Nothing, (A, B, C)] =
+  def services[A: Tag, B: Tag, C: Tag]: ZSTM[A with B with C, Nothing, (A, B, C)] =
     ZSTM.access(r => (r.get[A], r.get[B], r.get[C]))
 
   /**
@@ -1559,10 +1572,10 @@ object ZSTM {
    */
   @deprecated("use service", "2.0.0")
   def services[
-    A: Tag: IsNotIntersection,
-    B: Tag: IsNotIntersection,
-    C: Tag: IsNotIntersection,
-    D: Tag: IsNotIntersection
+    A: Tag,
+    B: Tag,
+    C: Tag,
+    D: Tag
   ]: ZSTM[A with B with C with D, Nothing, (A, B, C, D)] =
     ZSTM.access(r => (r.get[A], r.get[B], r.get[C], r.get[D]))
 
@@ -1714,13 +1727,12 @@ object ZSTM {
   final class ServiceAtPartiallyApplied[Service](private val dummy: Boolean = true) extends AnyVal {
     def apply[Key](
       key: => Key
-    )(implicit tag: Tag[Map[Key, Service]]): ZSTM[Map[Key, Service], Nothing, Option[Service]] =
+    )(implicit tag: EnvironmentTag[Map[Key, Service]]): ZSTM[Map[Key, Service], Nothing, Option[Service]] =
       ZSTM.environmentWith(_.getAt(key))
   }
 
   final class ServiceWithPartiallyApplied[Service](private val dummy: Boolean = true) extends AnyVal {
     def apply[A](f: Service => A)(implicit
-      ev: IsNotIntersection[Service],
       tag: Tag[Service]
     ): ZSTM[Service, Nothing, A] =
       ZSTM.service[Service].map(f)
@@ -1728,7 +1740,6 @@ object ZSTM {
 
   final class ServiceWithSTMPartiallyApplied[Service](private val dummy: Boolean = true) extends AnyVal {
     def apply[R <: Service, E, A](f: Service => ZSTM[R, E, A])(implicit
-      ev: IsNotIntersection[Service],
       tag: Tag[Service]
     ): ZSTM[R with Service, E, A] =
       ZSTM.service[Service].flatMap(f)
@@ -1745,7 +1756,7 @@ object ZSTM {
   }
 
   final class UpdateService[-R, +E, +A, M](private val self: ZSTM[R, E, A]) {
-    def apply[R1 <: R with M](f: M => M)(implicit ev: IsNotIntersection[M], tag: Tag[M]): ZSTM[R1, E, A] =
+    def apply[R1 <: R with M](f: M => M)(implicit tag: Tag[M]): ZSTM[R1, E, A] =
       self.provideSomeEnvironment(_.update(f))
   }
 
@@ -1813,6 +1824,7 @@ object ZSTM {
   private[stm] object internal {
     val DefaultJournalSize = 4
     val MaxRetries         = 10
+    val YieldOpCount       = 2048
 
     object Tags {
       final val Effect     = 0
@@ -2063,6 +2075,9 @@ object ZSTM {
                 }
 
               case _ =>
+                Sync(globalLock) {
+                  if (isInvalid(journal)) loop = true
+                }
             }
           }
         }
@@ -2182,6 +2197,9 @@ object ZSTM {
                 }
 
               case _ =>
+                Sync(globalLock) {
+                  if (isInvalid(journal)) loop = true
+                }
             }
           }
         }

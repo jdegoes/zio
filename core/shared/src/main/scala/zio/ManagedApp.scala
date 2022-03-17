@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package zio
 import zio.internal.stacktracer.Tracer
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
-@deprecated("2.0.0", "Use zio.ZIOApp and use the managed inside `run`")
+@deprecated("Use zio.ZIOApp and use the managed inside `run`", "2.0.0")
 trait ManagedApp extends BootstrapRuntime { ma =>
 
   /**

@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@ package zio.test
 import zio._
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
-abstract class ZIOSpec[R: Tag] extends ZIOSpecAbstract { self =>
+abstract class ZIOSpec[R: EnvironmentTag] extends ZIOSpecAbstract { self =>
   type Environment = R
 
-  final val tag: Tag[R] = Tag[R]
+  final val tag: EnvironmentTag[R] = EnvironmentTag[R]
 
   /**
    * Builds a spec with a single test.

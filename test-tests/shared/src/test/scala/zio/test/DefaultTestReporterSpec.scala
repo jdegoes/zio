@@ -40,20 +40,13 @@ object DefaultTestReporterSpec extends ZIOBaseSpec {
       test("correctly reports labeled failures") {
         assertM(runLog(test7))(equalTo(test7Expected.mkString + "\n" + reportStats(0, 0, 1)))
       },
+      test("correctly reports labeled failures for assertTrue") {
+        for {
+          log <- runLog(test9)
+        } yield assertTrue(log.contains("""?? "third""""), log.contains("""?? "fourth""""))
+      },
       test("correctly reports negated failures") {
         assertM(runLog(test8))(equalTo(test8Expected.mkString + "\n" + reportStats(0, 0, 1)))
-      },
-      test("correctly reports mock failure of invalid call") {
-        runLog(mock1).map(str => assertTrue(str == mock1Expected.mkString + reportStats(0, 0, 1)))
-      },
-      test("correctly reports mock failure of unmet expectations") {
-        runLog(mock2).map(str => assertTrue(str == mock2Expected.mkString + reportStats(0, 0, 1)))
-      },
-      test("correctly reports mock failure of unexpected call") {
-        assertM(runLog(mock3))(equalTo(mock3Expected.mkString + reportStats(0, 0, 1)))
-      },
-      test("correctly reports mock failure of invalid range") {
-        assertM(runLog(mock4))(equalTo(mock4Expected.mkString + reportStats(0, 0, 1)))
       }
     ) @@ silent
 }

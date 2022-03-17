@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2021-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 trait ZIOApp extends ZIOAppPlatformSpecific with ZIOAppVersionSpecific { self =>
   private[zio] val shuttingDown = new AtomicBoolean(false)
 
-  implicit def tag: Tag[Environment]
+  implicit def tag: EnvironmentTag[Environment]
 
   type Environment
 
@@ -65,7 +65,7 @@ trait ZIOApp extends ZIOAppPlatformSpecific with ZIOAppVersionSpecific { self =>
    * A helper function to exit the application with the specified exit code.
    */
   final def exit(code: ExitCode)(implicit trace: ZTraceElement): UIO[Unit] =
-    UIO {
+    ZIO.succeed {
       if (!shuttingDown.getAndSet(true)) {
         try Platform.exit(code.code)
         catch { case _: SecurityException => }
@@ -127,7 +127,7 @@ object ZIOApp {
       app.layer
     override final def run: ZIO[Environment with ZEnv with ZIOAppArgs, Any, Any] =
       app.run
-    implicit final def tag: Tag[Environment] =
+    implicit final def tag: EnvironmentTag[Environment] =
       app.tag
   }
 
@@ -139,13 +139,13 @@ object ZIOApp {
     run0: ZIO[R with ZEnv with ZIOAppArgs, Any, Any],
     layer0: ZLayer[ZIOAppArgs, Any, R],
     hook0: RuntimeConfigAspect
-  )(implicit tagged: Tag[R]): ZIOApp =
+  )(implicit tagged: EnvironmentTag[R]): ZIOApp =
     new ZIOApp {
       type Environment = R
-      def tag: Tag[Environment] = tagged
-      override def hook         = hook0
-      def layer                 = layer0
-      def run                   = run0
+      def tag: EnvironmentTag[Environment] = tagged
+      override def hook                    = hook0
+      def layer                            = layer0
+      def run                              = run0
     }
 
   /**

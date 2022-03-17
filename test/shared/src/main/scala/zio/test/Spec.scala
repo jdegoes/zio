@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -91,7 +91,7 @@ final case class Spec[-R, +E, +T](caseValue: SpecCase[R, E, T, Spec[R, E, T]]) e
    */
   final def provideSomeEnvironment[R0](
     f: ZEnvironment[R0] => ZEnvironment[R]
-  )(implicit ev: NeedsEnv[R], trace: ZTraceElement): Spec[R0, E, T] =
+  )(implicit trace: ZTraceElement): Spec[R0, E, T] =
     transform[R0, E, T] {
       case ExecCase(exec, spec)        => ExecCase(exec, spec)
       case LabeledCase(label, spec)    => LabeledCase(label, spec)
@@ -367,7 +367,7 @@ final case class Spec[-R, +E, +T](caseValue: SpecCase[R, E, T, Spec[R, E, T]]) e
    */
   def provideCustomLayer[E1 >: E, R1](layer: ZLayer[TestEnvironment, E1, R1])(implicit
     ev: TestEnvironment with R1 <:< R,
-    tagged: Tag[R1],
+    tagged: EnvironmentTag[R1],
     trace: ZTraceElement
   ): Spec[TestEnvironment, E1, T] =
     provideSomeLayer[TestEnvironment](layer)
@@ -387,7 +387,7 @@ final case class Spec[-R, +E, +T](caseValue: SpecCase[R, E, T, Spec[R, E, T]]) e
    */
   def provideCustomLayerShared[E1 >: E, R1](layer: ZLayer[TestEnvironment, E1, R1])(implicit
     ev: TestEnvironment with R1 <:< R,
-    tagged: Tag[R1],
+    tagged: EnvironmentTag[R1],
     trace: ZTraceElement
   ): Spec[TestEnvironment, E1, T] =
     provideSomeLayerShared(layer)
@@ -395,8 +395,18 @@ final case class Spec[-R, +E, +T](caseValue: SpecCase[R, E, T, Spec[R, E, T]]) e
   /**
    * Provides each test in this spec with its required environment
    */
-  final def provideEnvironment(r: ZEnvironment[R])(implicit ev: NeedsEnv[R], trace: ZTraceElement): Spec[Any, E, T] =
+  final def provideEnvironment(r: ZEnvironment[R])(implicit trace: ZTraceElement): Spec[Any, E, T] =
     provideSomeEnvironment(_ => r)
+
+  /**
+   * Provides each test in this spec with the single service it requires. If
+   * this spec requires multiple services use `provideEnvironment` instead.
+   */
+  final def provideService[Service <: R](service: Service)(implicit
+    tag: Tag[Service],
+    trace: ZTraceElement
+  ): Spec[Any, E, T] =
+    provideEnvironment(ZEnvironment(service))
 
   /**
    * Provides a layer to the spec, translating it up a level.
@@ -631,14 +641,14 @@ object Spec {
   final class ProvideSomeLayer[R0, -R, +E, +T](private val self: Spec[R, E, T]) extends AnyVal {
     def apply[E1 >: E, R1](
       layer: ZLayer[R0, E1, R1]
-    )(implicit ev: R0 with R1 <:< R, tagged: Tag[R1], trace: ZTraceElement): Spec[R0, E1, T] =
+    )(implicit ev: R0 with R1 <:< R, tagged: EnvironmentTag[R1], trace: ZTraceElement): Spec[R0, E1, T] =
       self.asInstanceOf[Spec[R0 with R1, E, T]].provideLayer(ZLayer.environment[R0] ++ layer)
   }
 
   final class ProvideSomeLayerShared[R0, -R, +E, +T](private val self: Spec[R, E, T]) extends AnyVal {
     def apply[E1 >: E, R1](
       layer: ZLayer[R0, E1, R1]
-    )(implicit ev: R0 with R1 <:< R, tagged: Tag[R1], trace: ZTraceElement): Spec[R0, E1, T] =
+    )(implicit ev: R0 with R1 <:< R, tagged: EnvironmentTag[R1], trace: ZTraceElement): Spec[R0, E1, T] =
       self.caseValue match {
         case ExecCase(exec, spec)     => Spec.exec(exec, spec.provideSomeLayerShared(layer))
         case LabeledCase(label, spec) => Spec.labeled(label, spec.provideSomeLayerShared(layer))
@@ -662,7 +672,7 @@ object Spec {
   final class UpdateService[-R, +E, +T, M](private val self: Spec[R, E, T]) extends AnyVal {
     def apply[R1 <: R with M](
       f: M => M
-    )(implicit ev: IsNotIntersection[M], tag: Tag[M], trace: ZTraceElement): Spec[R1, E, T] =
+    )(implicit tag: Tag[M], trace: ZTraceElement): Spec[R1, E, T] =
       self.provideSomeEnvironment(_.update(f))
   }
 

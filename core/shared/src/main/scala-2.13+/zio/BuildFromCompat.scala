@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2020-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ private[zio] trait BuildFromCompat {
     : BuildFrom[Collection[Any], Element, Collection[Element]] =
     scala.collection.BuildFrom.buildFromIterableOps[Collection, Any, Element]
 
-  implicit def buildFromNothing[A, Collection[+Element] <: Iterable[Element] with IterableOps[A, Collection, _]]
-    : BuildFrom[Collection[A], Nothing, Collection[Nothing]] =
-    scala.collection.BuildFrom.buildFromIterableOps[Collection, A, Nothing]
+  implicit def buildFromNothing[Collection[+Element] <: Iterable[Element] with IterableOps[Any, Collection, _]]
+    : BuildFrom[Collection[Any], Nothing, Collection[Nothing]] =
+    scala.collection.BuildFrom.buildFromIterableOps[Collection, Any, Nothing]
 }

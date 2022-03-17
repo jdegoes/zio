@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -212,6 +212,9 @@ object ZFiberRef {
 
   lazy val currentLogSpan: FiberRef.Runtime[List[LogSpan]] =
     FiberRef.unsafeMake(Nil)
+
+  lazy val currentLogAnnotations: FiberRef.Runtime[Map[String, String]] =
+    FiberRef.unsafeMake(Map.empty)
 
   /**
    * Creates a new `FiberRef` with given initial value.

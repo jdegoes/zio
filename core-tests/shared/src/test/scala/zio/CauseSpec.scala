@@ -2,8 +2,8 @@ package zio
 
 import zio.Cause.{Both, Then, empty}
 import zio.test.Assertion._
-import zio.test._
 import zio.test.TestAspect.samples
+import zio.test._
 
 object CauseSpec extends ZIOBaseSpec {
 
@@ -188,7 +188,7 @@ object CauseSpec extends ZIOBaseSpec {
     Gen.string
 
   val fiberIds: Gen[Random, FiberId] =
-    Gen.int.zipWith(Gen.int)(FiberId(_, _))
+    Gen.int.zipWith(Gen.int)(FiberId(_, _, ZTraceElement.empty))
 
   val throwables: Gen[Random, Throwable] =
     Gen.throwable

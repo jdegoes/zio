@@ -2,11 +2,12 @@ package zio.metrics.jvm
 
 import com.github.ghik.silencer.silent
 
-import com.sun.management.GarbageCollectionNotificationInfo
 import zio._
 import zio.stacktracer.TracingImplicits.disableAutoTrace
-import zio.ZIOMetric.Counter
+import zio.metrics._
+import zio.metrics.ZIOMetric.Counter
 
+import com.sun.management.GarbageCollectionNotificationInfo
 import java.lang.management.ManagementFactory
 import javax.management.openmbean.CompositeData
 import javax.management.{Notification, NotificationEmitter, NotificationListener}
@@ -15,15 +16,15 @@ import scala.collection.JavaConverters._
 
 trait MemoryAllocation extends JvmMetrics {
   override type Feature = MemoryAllocation
-  override val featureTag: Tag[MemoryAllocation] = Tag[MemoryAllocation]
-  implicit val trace: ZTraceElement              = ZTraceElement.empty
+  override val featureTag           = Tag[MemoryAllocation]
+  implicit val trace: ZTraceElement = ZTraceElement.empty
 
   /**
    * Total bytes allocated in a given JVM memory pool. Only updated after GC,
    * not continuously.
    */
   private def countAllocations(pool: String): Counter[Long] =
-    ZIOMetric.countValueWith("jvm_memory_pool_allocated_bytes_total", MetricLabel("pool", pool))(_.toDouble)
+    ZIOMetric.counter("jvm_memory_pool_allocated_bytes_total").tagged(MetricLabel("pool", pool))
 
   private class Listener(runtime: Runtime[Any]) extends NotificationListener {
     private val lastMemoryUsage: mutable.Map[String, Long] = mutable.HashMap.empty
@@ -69,8 +70,7 @@ trait MemoryAllocation extends JvmMetrics {
       if (diff2 < 0) diff2 = 0
       val increase = diff1 + diff2
       if (increase > 0) {
-        val effect: ZIO[Any, Nothing, Long] = UIO(increase) @@ countAllocations(memoryPool)
-        runtime.unsafeRun(effect.unit)
+        runtime.unsafeRun(countAllocations(memoryPool).incrementBy(increase))
       }
     }
   }
@@ -84,10 +84,10 @@ trait MemoryAllocation extends JvmMetrics {
         for {
           runtime                 <- ZIO.runtime[Any]
           listener                 = new Listener(runtime)
-          garbageCollectorMXBeans <- Task(ManagementFactory.getGarbageCollectorMXBeans.asScala)
+          garbageCollectorMXBeans <- ZIO.attempt(ManagementFactory.getGarbageCollectorMXBeans.asScala)
           _ <- ZIO.foreachDiscard(garbageCollectorMXBeans) {
                  case emitter: NotificationEmitter =>
-                   Task(emitter.addNotificationListener(listener, null, null))
+                   ZIO.attempt(emitter.addNotificationListener(listener, null, null))
                  case _ => ZIO.unit
                }
         } yield (listener, garbageCollectorMXBeans)
@@ -95,7 +95,7 @@ trait MemoryAllocation extends JvmMetrics {
         ZIO
           .foreachDiscard(garbageCollectorMXBeans) {
             case emitter: NotificationEmitter =>
-              Task(emitter.removeNotificationListener(listener))
+              ZIO.attempt(emitter.removeNotificationListener(listener))
             case _ => ZIO.unit
           }
           .orDie

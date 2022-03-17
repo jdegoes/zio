@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,7 +121,7 @@ final class TSemaphore private (val permits: TRef[Long]) extends Serializable {
    * permits as the `acquire` action and releasing them as the `release` action.
    */
   def withPermitsManaged(n: Long)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
-    ZManaged.acquireReleaseInterruptible(acquireN(n).commit)(release.commit)
+    ZManaged.acquireReleaseInterruptible(acquireN(n).commit)(releaseN(n).commit)
 
   private def assertNonNegative(n: Long): Unit =
     require(n >= 0, s"Unexpected negative value `$n` passed to acquireN or releaseN.")

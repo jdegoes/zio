@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ object LogLevel {
   val Warning: LogLevel = LogLevel(30000, "WARN", 4)
   val Info: LogLevel    = LogLevel(20000, "INFO", 6)
   val Debug: LogLevel   = LogLevel(10000, "DEBUG", 7)
-  val Runtime: LogLevel = LogLevel(0, "RUNTIME", 7)
+  val Trace: LogLevel   = LogLevel(0, "TRACE", 7)
   val None: LogLevel    = LogLevel(Int.MaxValue, "OFF", 7)
 
   implicit val orderingLogLevel: Ordering[LogLevel] = Ordering.by(_.ordinal)

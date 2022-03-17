@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2019-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ package zio.test.sbt
 
 import sbt.testing._
 import zio.test.{AbstractRunnableSpec, Summary, TestArgs, ZIOSpec, ZIOSpecAbstract, sbt}
-import zio.{Chunk, Exit, Runtime, UIO, ZEnvironment, ZIO, ZIOAppArgs, ZLayer}
+import zio.{Chunk, Exit, Runtime, ZEnvironment, ZIO, ZIOAppArgs, ZLayer}
 
 import scala.collection.mutable
 
@@ -91,7 +91,7 @@ sealed class ZTestTask(
         Runtime(ZEnvironment.empty, zioSpec.runtime.runtimeConfig).unsafeRunAsyncWith {
           zioSpec.run
             .provide(ZLayer.succeed(ZIOAppArgs(Chunk.empty)) ++ zio.ZEnv.live)
-            .onError(e => UIO(println(e.prettyPrint)))
+            .onError(e => ZIO.succeed(println(e.prettyPrint)))
         } { exit =>
           exit match {
             case Exit.Failure(cause) => Console.err.println(s"$runnerType failed: " + cause.prettyPrint)

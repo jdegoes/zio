@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2021 John A. De Goes and the ZIO Contributors
+ * Copyright 2018-2022 John A. De Goes and the ZIO Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
    * Maps the success value of this effect to a service.
    */
   @deprecated("use toLayer", "2.0.0")
-  def asService[A1 >: A: Tag: IsNotIntersection](implicit trace: ZTraceElement): ZManaged[R, E, ZEnvironment[A1]] =
+  def asService[A1 >: A: Tag](implicit trace: ZTraceElement): ZManaged[R, E, ZEnvironment[A1]] =
     map(ZEnvironment[A1](_))
 
   /**
@@ -824,7 +824,7 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
     layer: => ZLayer[ZEnv, E1, R1]
   )(implicit
     ev: ZEnv with R1 <:< R,
-    tagged: Tag[R1],
+    tagged: EnvironmentTag[R1],
     trace: ZTraceElement
   ): ZManaged[ZEnv, E1, A] =
     provideSomeLayer[ZEnv](layer)
@@ -833,8 +833,19 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
    * Provides the `ZManaged` effect with its required environment, which
    * eliminates its dependency on `R`.
    */
-  def provideEnvironment(r: => ZEnvironment[R])(implicit ev: NeedsEnv[R], trace: ZTraceElement): Managed[E, A] =
+  def provideEnvironment(r: => ZEnvironment[R])(implicit trace: ZTraceElement): Managed[E, A] =
     provideSomeEnvironment(_ => r)
+
+  /**
+   * Provides the `ZManaged` effect with the single service it requires. If the
+   * managed effect requires more than one service use `provideEnvironment`
+   * instead.
+   */
+  def provideService[Service <: R](service: Service)(implicit
+    tag: Tag[Service],
+    trace: ZTraceElement
+  ): Managed[E, A] =
+    provideEnvironment(ZEnvironment(service))
 
   /**
    * Provides a layer to the `ZManaged`, which translates it to another level.
@@ -850,7 +861,7 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
    */
   def provideSomeEnvironment[R0](
     f: ZEnvironment[R0] => ZEnvironment[R]
-  )(implicit ev: NeedsEnv[R], trace: ZTraceElement): ZManaged[R0, E, A] =
+  )(implicit trace: ZTraceElement): ZManaged[R0, E, A] =
     ZManaged(zio.provideSomeEnvironment(f))
 
   /**
@@ -1158,7 +1169,7 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
   /**
    * Constructs a layer from this managed resource.
    */
-  def toLayer[A1 >: A: Tag: IsNotIntersection](implicit trace: ZTraceElement): ZLayer[R, E, A1] =
+  def toLayer[A1 >: A: Tag](implicit trace: ZTraceElement): ZLayer[R, E, A1] =
     ZLayer.fromManaged[R, E, A1](self)
 
   /**
@@ -1253,7 +1264,7 @@ sealed abstract class ZManaged[-R, +E, +A] extends ZManagedVersionSpecific[R, E,
       ZManaged.currentReleaseMap.locally(releaseMap) {
         ZManaged.currentReleaseMap.get.acquireReleaseExitWith(
           (relMap, exit: Exit[E1, B]) => relMap.releaseAll(exit, ExecutionStrategy.Sequential),
-          relMap => ZIO.uninterruptibleMask(restore => restore(zio)).flatMap { case (_, a) => f(a) }
+          relMap => zio.flatMap { case (_, a) => f(a) }
         )
       }
     }
@@ -1471,7 +1482,7 @@ object ZManaged extends ZManagedPlatformSpecific {
     def apply[Key](
       key: => Key
     )(implicit
-      tag: Tag[Map[Key, Service]],
+      tag: EnvironmentTag[Map[Key, Service]],
       trace: ZTraceElement
     ): ZManaged[Map[Key, Service], Nothing, Option[Service]] =
       ZManaged.environmentWith(_.getAt(key))
@@ -1495,7 +1506,6 @@ object ZManaged extends ZManagedPlatformSpecific {
 
   final class ServiceWithManagedPartiallyApplied[Service](private val dummy: Boolean = true) extends AnyVal {
     def apply[R <: Service, E, A](f: Service => ZManaged[R, E, A])(implicit
-      ev: IsNotIntersection[Service],
       tag: Tag[Service],
       trace: ZTraceElement
     ): ZManaged[R with Service, E, A] =
@@ -1525,7 +1535,7 @@ object ZManaged extends ZManagedPlatformSpecific {
       layer: => ZLayer[R0, E1, R1]
     )(implicit
       ev: R0 with R1 <:< R,
-      tagged: Tag[R1],
+      tagged: EnvironmentTag[R1],
       trace: ZTraceElement
     ): ZManaged[R0, E1, A] =
       self.asInstanceOf[ZManaged[R0 with R1, E, A]].provideLayer(ZLayer.environment[R0] ++ layer)
@@ -1541,7 +1551,7 @@ object ZManaged extends ZManagedPlatformSpecific {
   final class UpdateService[-R, +E, +A, M](private val self: ZManaged[R, E, A]) extends AnyVal {
     def apply[R1 <: R with M](
       f: M => M
-    )(implicit ev: IsNotIntersection[M], tag: Tag[M], trace: ZTraceElement): ZManaged[R1, E, A] =
+    )(implicit tag: Tag[M], trace: ZTraceElement): ZManaged[R1, E, A] =
       self.provideSomeEnvironment(_.update(f))
   }
 
@@ -1833,7 +1843,7 @@ object ZManaged extends ZManagedPlatformSpecific {
   def acquireReleaseAttemptWith[A](acquire: => A)(release: A => Any)(implicit
     trace: ZTraceElement
   ): ZManaged[Any, Throwable, A] =
-    acquireReleaseWith(Task(acquire))(a => Task(release(a)).orDie)
+    acquireReleaseWith(ZIO.attempt(acquire))(a => ZIO.attempt(release(a)).orDie)
 
   /**
    * Lifts a `ZIO[R, E, A]` into `ZManaged[R, E, A]` with a release action that
@@ -2481,7 +2491,7 @@ object ZManaged extends ZManagedPlatformSpecific {
   def fromAutoCloseable[R, E, A <: AutoCloseable](fa: => ZIO[R, E, A])(implicit
     trace: ZTraceElement
   ): ZManaged[R, E, A] =
-    acquireReleaseWith(fa)(a => UIO(a.close()))
+    acquireReleaseWith(fa)(a => ZIO.succeed(a.close()))
 
   /**
    * Lifts a ZIO[R, E, A] into ZManaged[R, E, A] with no release action. The
@@ -2657,6 +2667,88 @@ object ZManaged extends ZManagedPlatformSpecific {
    */
   def lock(executor: => Executor)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
     onExecutor(executor)
+
+  /**
+   * Logs the specified message at the current log level.
+   */
+  def log(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.log(message))
+
+  /**
+   * Annotates each log in managed effects composed after this.
+   */
+  def logAnnotate(key: => String, value: => String)(implicit
+    trace: ZTraceElement
+  ): ZManaged[Any, Nothing, Unit] =
+    FiberRef.currentLogAnnotations.get.toManaged.flatMap { annotations =>
+      FiberRef.currentLogAnnotations.locallyManaged(annotations.updated(key, value))
+    }
+
+  /**
+   * Retrieves current log annotations.
+   */
+  def logAnnotations(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Map[String, String]] =
+    ZManaged.fromZIO(ZFiberRef.currentLogAnnotations.get)
+
+  /**
+   * Logs the specified message at the debug log level.
+   */
+  def logDebug(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logDebug(message))
+
+  /**
+   * Logs the specified message at the error log level.
+   */
+  def logError(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logError(message))
+
+  /**
+   * Logs the specified cause as an error.
+   */
+  def logErrorCause(cause: => Cause[Any])(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logErrorCause(cause))
+
+  /**
+   * Logs the specified message at the fatal log level.
+   */
+  def logFatal(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logFatal(message))
+
+  /**
+   * Logs the specified message at the informational log level.
+   */
+  def logInfo(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logInfo(message))
+
+  /**
+   * Sets the log level for managed effects composed after this.
+   */
+  def logLevel(level: LogLevel)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    FiberRef.currentLogLevel.locallyManaged(level)
+
+  /**
+   * Adjusts the label for the logging span for managed effects composed after
+   * this.
+   */
+  def logSpan(label: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    FiberRef.currentLogSpan.get.toManaged.flatMap { stack =>
+      val instant = java.lang.System.currentTimeMillis()
+      val logSpan = LogSpan(label, instant)
+
+      FiberRef.currentLogSpan.locallyManaged(logSpan :: stack)
+    }
+
+  /**
+   * Logs the specified message at the trace log level.
+   */
+  def logTrace(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logTrace(message))
+
+  /**
+   * Logs the specified message at the warning log level.
+   */
+  def logWarning(message: => String)(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Unit] =
+    ZManaged.fromZIO(ZIO.logWarning(message))
 
   /**
    * Loops with the specified effectual function, collecting the results into a
@@ -3072,10 +3164,14 @@ object ZManaged extends ZManagedPlatformSpecific {
       }
     }
 
-  def provideLayer[RIn, E, ROut, RIn2, ROut2](builder: ZLayer[RIn, E, ROut])(
+  def provideLayer[RIn, E, ROut, RIn2, ROut2](layer: ZLayer[RIn, E, ROut])(
     managed: ZManaged[ROut with RIn2, E, ROut2]
-  )(implicit ev: Tag[RIn2], tag: Tag[ROut], trace: ZTraceElement): ZManaged[RIn with RIn2, E, ROut2] =
-    managed.provideSomeLayer[RIn with RIn2](ZLayer.environment[RIn2] ++ builder)
+  )(implicit
+    ev: EnvironmentTag[RIn2],
+    tag: EnvironmentTag[ROut],
+    trace: ZTraceElement
+  ): ZManaged[RIn with RIn2, E, ROut2] =
+    managed.provideSomeLayer[RIn with RIn2](ZLayer.environment[RIn2] ++ layer)
 
   /**
    * Reduces an `Iterable[IO]` to a single `IO`, working sequentially.
@@ -3153,6 +3249,12 @@ object ZManaged extends ZManagedPlatformSpecific {
   def runtime[R](implicit trace: ZTraceElement): ZManaged[R, Nothing, Runtime[R]] =
     ZManaged.fromZIO(ZIO.runtime[R])
 
+  /**
+   * Retrieves the current runtime configuration.
+   */
+  def runtimeConfig(implicit trace: ZTraceElement): ZManaged[Any, Nothing, RuntimeConfig] =
+    ZManaged.fromZIO(ZIO.runtimeConfig)
+
   def sandbox[R, E, A](v: ZManaged[R, E, A])(implicit trace: ZTraceElement): ZManaged[R, Cause[E], A] =
     ZManaged.suspend(v.sandbox)
 
@@ -3190,7 +3292,7 @@ object ZManaged extends ZManagedPlatformSpecific {
   /**
    * Accesses the specified service in the environment of the effect.
    */
-  def service[A: Tag: IsNotIntersection](implicit trace: ZTraceElement): ZManaged[A, Nothing, A] =
+  def service[A: Tag](implicit trace: ZTraceElement): ZManaged[A, Nothing, A] =
     ZManaged.environmentWith(_.get[A])
 
   /**
@@ -3203,7 +3305,7 @@ object ZManaged extends ZManagedPlatformSpecific {
    * Accesses the specified services in the environment of the effect.
    */
   @deprecated("use service", "2.0.0")
-  def services[A: Tag: IsNotIntersection, B: Tag: IsNotIntersection](implicit
+  def services[A: Tag, B: Tag](implicit
     trace: ZTraceElement
   ): ZManaged[A with B, Nothing, (A, B)] =
     ZManaged.access(r => (r.get[A], r.get[B]))
@@ -3212,7 +3314,7 @@ object ZManaged extends ZManagedPlatformSpecific {
    * Accesses the specified services in the environment of the effect.
    */
   @deprecated("use service", "2.0.0")
-  def services[A: Tag: IsNotIntersection, B: Tag: IsNotIntersection, C: Tag: IsNotIntersection](implicit
+  def services[A: Tag, B: Tag, C: Tag](implicit
     trace: ZTraceElement
   ): ZManaged[A with B with C, Nothing, (A, B, C)] =
     ZManaged.access(r => (r.get[A], r.get[B], r.get[C]))
@@ -3222,10 +3324,10 @@ object ZManaged extends ZManagedPlatformSpecific {
    */
   @deprecated("use service", "2.0.0")
   def services[
-    A: Tag: IsNotIntersection,
-    B: Tag: IsNotIntersection,
-    C: Tag: IsNotIntersection,
-    D: Tag: IsNotIntersection
+    A: Tag,
+    B: Tag,
+    C: Tag,
+    D: Tag
   ](implicit
     trace: ZTraceElement
   ): ZManaged[A with B with C with D, Nothing, (A, B, C, D)] =
@@ -3642,7 +3744,7 @@ object ZManaged extends ZManagedPlatformSpecific {
   }
 
   private[zio] def succeedNow[A](r: A): ZManaged[Any, Nothing, A] =
-    ZManaged(IO.succeedNow((Finalizer.noop, r)))
+    ZManaged(ZIO.succeedNow((Finalizer.noop, r)))
 
   implicit final class RefineToOrDieOps[R, E <: Throwable, A](private val self: ZManaged[R, E, A]) extends AnyVal {
 
