@@ -315,8 +315,6 @@ object successor {
     override final def toString(): String =
       s"FiberContext($fiberId)"
 
-    final def scope: ZScope = ??? // TODO: ZScope.unsafeMake(self)
-
     final def status(implicit trace: ZTraceElement): UIO[Fiber.Status] =
       evalOnZIO(ZIO.succeed(unsafeGetStatus()), ZIO.succeed(Fiber.Status.Done))
 
@@ -395,8 +393,7 @@ object successor {
         unsafeGetInterruptors(),
         InterruptStatus.fromBoolean(unsafeIsInterruptible()),
         unsafeGetExecutor(),
-        fiberRefs.containsKey(FiberRef.currentExecutor),
-        scope
+        fiberRefs.containsKey(FiberRef.currentExecutor)
       )
 
     final def unsafeGetDone(): Exit[E, A] =
@@ -408,7 +405,7 @@ object successor {
     private def unsafeGetExecutor(): zio.Executor =
       unsafeGetRefOrInitial(FiberRef.currentExecutor).getOrElse(runtimeConfig.executor)
 
-    final def unsafeGetForkScopeOverride(): Option[ZScope] =
+    final def unsafeGetForkScopeOverride(): Option[FiberScope] =
       unsafeGetRefOrInitial(FiberRef.forkScopeOverride)
 
     final def unsafeGetInterruptors(): Set[FiberId] = unsafeGetRefOrElse(FiberRef.interruptors, Set.empty[FiberId])

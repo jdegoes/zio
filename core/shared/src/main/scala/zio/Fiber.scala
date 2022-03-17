@@ -334,6 +334,13 @@ sealed abstract class Fiber[+E, +A] { self =>
   def poll(implicit trace: ZTraceElement): UIO[Option[Exit[E, A]]]
 
   /**
+   * Converts this fiber into a scoped [[zio.ZIO]]. The fiber is interrupted
+   * when the scope is closed.
+   */
+  final def scoped(implicit trace: ZTraceElement): ZIO[Scope, Nothing, Fiber[E, A]] =
+    ZIO.acquireRelease(ZIO.succeedNow(self))(_.interrupt)
+
+  /**
    * Converts this fiber into a [[scala.concurrent.Future]].
    *
    * @param ev
@@ -372,16 +379,6 @@ sealed abstract class Fiber[+E, +A] { self =>
           runtime.unsafeRunToFuture[Nothing, Exit[Throwable, A]](self.interrupt.map(_.mapError(f)))
       }
     }.uninterruptible
-
-  /**
-   * Converts this fiber into a [[zio.ZManaged]]. Fiber is interrupted on
-   * release.
-   *
-   * @return
-   *   `ZManaged[Any, Nothing, Fiber[E, A]]`
-   */
-  final def toManaged(implicit trace: ZTraceElement): ZManaged[Any, Nothing, Fiber[E, A]] =
-    ZManaged.acquireReleaseWith(UIO.succeedNow(self))(_.interrupt)
 
   /**
    * Maps the output of this fiber to `()`.
@@ -530,11 +527,6 @@ object Fiber extends FiberPlatformSpecific {
     override def id: FiberId.Runtime
 
     /**
-     * The scope of the fiber.
-     */
-    def scope: ZScope
-
-    /**
      * The status of the fiber.
      */
     def status(implicit trace: ZTraceElement): UIO[Fiber.Status]
@@ -569,8 +561,7 @@ object Fiber extends FiberPlatformSpecific {
     interrupters: Set[FiberId],
     interruptStatus: InterruptStatus,
     executor: Executor,
-    isLocked: Boolean,
-    scope: ZScope
+    isLocked: Boolean
   )
 
   final case class Dump(fiberId: FiberId.Runtime, status: Status, trace: ZTrace) extends Product with Serializable {
