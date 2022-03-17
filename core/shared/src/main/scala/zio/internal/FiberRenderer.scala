@@ -38,8 +38,8 @@ private[zio] object FiberRenderer {
       (if (hours == 0 && minutes == 0 && seconds == 0) "" else s"${seconds}s") +
       (s"${millis}ms")
     val waitMsg = dump.status match {
-      // case Suspended(_, _, _, blockingOn, _) =>
-      //   if (blockingOn ne FiberId.None) "waiting on " + s"#${blockingOn.ids.mkString(", ")}" else ""
+      case Running(_, _, _, Some(Fiber.Suspension(blockingOn, _))) =>
+        if (blockingOn ne FiberId.None) "waiting on " + s"#${blockingOn.ids.mkString(", ")}" else ""
       case _ => ""
     }
     val statMsg = renderStatus(dump.status)
@@ -53,14 +53,13 @@ private[zio] object FiberRenderer {
 
   private def renderStatus(status: Fiber.Status): String =
     status match {
-      case Done => "Done"
-      case _    => ???
-      // case Running(b) => "Running(" + (if (b) "interrupting" else "") + ")"
-      // case Suspended(_, interruptible, epoch, _, asyncTrace) =>
-      //   val in = if (interruptible) "interruptible" else "uninterruptible"
-      //   val ep = s"$epoch asyncs"
-      //   val as = asyncTrace.toString
-      //   s"Suspended($in, $ep, $as)"
+      case Done                              => "Done"
+      case Running(_, interrupting, _, None) => "Running(" + (if (interrupting) "interrupting" else "") + ")"
+      case Running(interruptible, _, epoch, Some(Fiber.Suspension(_, asyncTrace))) =>
+        val in = if (interruptible) "interruptible" else "uninterruptible"
+        val ep = s"$epoch asyncs"
+        val as = asyncTrace.toString
+        s"Suspended($in, $ep, $as)"
     }
 
 }
