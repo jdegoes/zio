@@ -601,12 +601,19 @@ object Fiber extends FiberPlatformSpecific {
 
   final case class Suspension(blockingOn: FiberId, asyncTrace: ZTraceElement)
 
-  sealed trait Status
+  sealed trait Status {
+    def withInterrupting(newInterrupting: Boolean): Status
+  }
 
   object Status {
-    case object Done extends Status
+    case object Done extends Status {
+      def withInterrupting(newInterrupting: Boolean): Status = this
+    }
     case class Running(interruptible: Boolean, interrupting: Boolean, asyncs: Int, suspension: Option[Suspension])
-        extends Status
+        extends Status {
+      def withInterrupting(newInterrupting: Boolean): Status =
+        copy(interrupting = newInterrupting)
+    }
   }
 
   /**

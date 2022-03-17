@@ -52,7 +52,7 @@ private[zio] final class FiberContext[E, A](
   private val state = new AtomicReference[FiberState[E, A]](FiberState.initial)
 
   @volatile
-  private[this] var asyncEpoch: Long = 0L
+  private[this] var asyncEpoch: Int = 0
 
   private[this] val stack = Stack[ErasedTracedCont]()
 
@@ -640,28 +640,27 @@ private[zio] final class FiberContext[E, A](
 
   // @tailrec
   private def unsafeEnterAsync(
-    epoch: Long,
+    epoch: Int,
     register: AnyRef,
     blockingOn: FiberId
   )(implicit trace: ZTraceElement): Unit = {
     val oldState = state.get
 
     oldState match {
-      // case executing @ Executing(Status.Running(interrupting), _, _, _, CancelerState.Empty, _) =>
-      //   val asyncTrace = trace
+      case executing @ Executing(Status.Running(_, interrupting, _, _), _, _, _, _, _) =>
+        val asyncTrace = trace
 
-      //   val newStatus =
-      //     Status.Suspended(
-      //       interrupting,
-      //       unsafeIsInterruptible() && !unsafeIsInterrupting(),
-      //       epoch,
-      //       blockingOn,
-      //       asyncTrace
-      //     )
+        val newStatus =
+          Status.Running(
+            unsafeIsInterruptible() && !unsafeIsInterrupting(),
+            interrupting,
+            epoch,
+            Some(Fiber.Suspension(blockingOn, asyncTrace))
+          )
 
-      //   val newState = executing.copy(status = newStatus, asyncCanceler = CancelerState.Pending)
+        val newState = executing.copy(status = newStatus, asyncCanceler = CancelerState.Pending)
 
-      //   if (!state.compareAndSet(oldState, newState)) unsafeEnterAsync(epoch, register, blockingOn)
+        if (!state.compareAndSet(oldState, newState)) unsafeEnterAsync(epoch, register, blockingOn)
 
       case _ => throw new IllegalStateException(s"Fiber $fiberId is not running")
     }
@@ -782,32 +781,31 @@ private[zio] final class FiberContext[E, A](
       val oldState = state.get
 
       oldState match {
-        // case executing @ Executing(
-        //       Status.Suspended(oldStatus, true, _, _, _),
-        //       _,
-        //       _,
-        //       interruptors,
-        //       CancelerState.Registered(asyncCanceler),
-        //       _
-        //     ) =>
-        //   val newState =
-        //     ???
-        // executing.copy(
-        //   status = Status.Running(true),
-        //   interruptors = interruptors + fiberId,
-        //   asyncCanceler = CancelerState.Empty
-        // )
+        case executing @ Executing(
+              status @ Status.Running(true, _, _, _),
+              _,
+              _,
+              interruptors,
+              CancelerState.Registered(asyncCanceler),
+              _
+            ) =>
+          val newState =
+            executing.copy(
+              status = status.copy(interrupting = true),
+              interruptors = interruptors + fiberId,
+              asyncCanceler = CancelerState.Empty
+            )
 
-        // if (!state.compareAndSet(oldState, newState)) setInterruptedLoop()
-        // else {
-        //   val interrupt = ZIO.failCause(interruptedCause)
+          if (!state.compareAndSet(oldState, newState)) setInterruptedLoop()
+          else {
+            val interrupt = ZIO.failCause(interruptedCause)
 
-        //   val effect =
-        //     if (asyncCanceler eq ZIO.unit) interrupt else asyncCanceler *> interrupt
+            val effect =
+              if (asyncCanceler eq ZIO.unit) interrupt else asyncCanceler *> interrupt
 
-        //   // if we are in this critical section of code then we return
-        //   unsafeRunLater(effect)
-        // }
+            // if we are in this critical section of code then we return
+            unsafeRunLater(effect)
+          }
 
         case executing @ Executing(_, _, interrupted, interruptors, _, _) =>
           val newCause = interrupted ++ interruptedCause
@@ -1043,7 +1041,7 @@ private[zio] final class FiberContext[E, A](
         if (
           !state.compareAndSet(
             oldState,
-            ??? //Executing(status.withInterrupting(value), observers, interrupted, interruptors, asyncCanceler, mailbox)
+            Executing(status.withInterrupting(value), observers, interrupted, interruptors, asyncCanceler, mailbox)
           )
         )
           unsafeSetInterrupting(value)
