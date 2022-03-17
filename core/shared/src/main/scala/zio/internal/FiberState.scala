@@ -57,15 +57,14 @@ object FiberState extends Serializable {
   }
 
   def initial[E, A]: Executing[E, A] =
-    ???
-  // Executing[E, A](
-  //   Status.Running(false),
-  //   Nil,
-  //   Cause.empty,
-  //   Set.empty[FiberId],
-  //   CancelerState.Empty,
-  //   null.asInstanceOf[UIO[Any]]
-  // )
+    Executing[E, A](
+      Status.Running(false, false, 0, None),
+      Nil,
+      Cause.empty,
+      Set.empty[FiberId],
+      CancelerState.Empty,
+      null.asInstanceOf[UIO[Any]]
+    )
 }
 
 object successor {
@@ -454,11 +453,12 @@ object successor {
     final def unsafeIsSuspended(): Boolean = flagsState.getStatus() == Flags.Status.Suspended
 
     final def unsafeLog(tag: LightTypeTag, message: () => Any)(implicit trace: ZTraceElement): Unit = {
-      val logLevel = unsafeGetRefOrInitial(FiberRef.currentLogLevel)
-      val spans    = unsafeGetRefOrInitial(FiberRef.currentLogSpan)
+      val logLevel    = unsafeGetRefOrInitial(FiberRef.currentLogLevel)
+      val spans       = unsafeGetRefOrInitial(FiberRef.currentLogSpan)
+      val annotations = unsafeGetRefOrInitial(FiberRef.currentLogAnnotations)
 
       unsafeLogForEach(tag) { logger =>
-        logger(trace, fiberId, logLevel, message, ???, ???, spans, ???) // FIXME
+        logger(trace, fiberId, logLevel, message, Cause.empty, ???, spans, annotations) // FIXME
       }
     }
 
@@ -477,6 +477,8 @@ object successor {
 
       val spans = unsafeGetRefOrInitial(FiberRef.currentLogSpan)
 
+      val annotations = unsafeGetRefOrInitial(FiberRef.currentLogAnnotations)
+
       val contextMap =
         if (overrideRef1 ne null) {
           val map: Map[FiberRef.Runtime[_], AnyRef] = ??? // FIXME
@@ -486,7 +488,7 @@ object successor {
         } else ??? // FIXME
 
       unsafeLogForEach(tag) { logger =>
-        logger(trace, fiberId, logLevel, message, ???, contextMap, spans, ???) // FIXME
+        logger(trace, fiberId, logLevel, message, Cause.empty, contextMap, spans, annotations) // FIXME
       }
     }
 
