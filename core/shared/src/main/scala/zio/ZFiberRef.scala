@@ -672,14 +672,14 @@ object ZFiberRef {
     ZFiberRef.unsafeMake(ZEnvironment.empty, a => a, (a, _) => a)
 
   private[zio] val suppressed: FiberRef.Runtime[Cause[Nothing]] =
-    FiberRef.unsafeMake[Cause[Nothing]](Cause.empty, identity(_), _ && _)
+    ZFiberRef.unsafeMake[Cause[Nothing]](Cause.empty, identity(_), _ && _)
 
   private[zio] val interruptors: FiberRef.Runtime[Set[FiberId]] =
-    FiberRef.unsafeMake[Set[FiberId]](Set.empty[FiberId], identity(_), _ ++ _)
+    ZFiberRef.unsafeMake[Set[FiberId]](Set.empty[FiberId], identity(_), _ ++ _)
 
   private[zio] val exit: FiberRef.Runtime[Exit[Any, Any]] =
-    FiberRef.unsafeMake[Exit[Any, Any]](Exit.empty, identity(_), (o, _) => o)
+    ZFiberRef.unsafeMake[Exit[Any, Any]](Exit.empty, identity(_), (o, _) => o)
 
   private[zio] val listeners: FiberRef.Runtime[List[Exit[Nothing, Exit[Any, Any]] => Unit]] =
-    FiberRef.unsafeMake(Nil, identity(_), (o, _) => o)
+    ZFiberRef.unsafeMake(Nil, identity(_), (o, _) => o)
 }
