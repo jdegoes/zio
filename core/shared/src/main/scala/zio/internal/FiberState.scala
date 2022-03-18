@@ -385,8 +385,8 @@ object successor {
     final def unsafeGetCurrentExecutor(): Option[Executor] =
       unsafeGetRefOrElse(FiberRef.currentExecutor, None)
 
-    private def unsafeGetDescriptor(implicit trace: ZTraceElement): Fiber.Descriptor2 =
-      Fiber.Descriptor2(
+    private def unsafeGetDescriptor(implicit trace: ZTraceElement): Fiber.Descriptor =
+      Fiber.Descriptor(
         fiberId,
         unsafeGetStatus(),
         unsafeGetInterruptors(),
