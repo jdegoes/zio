@@ -351,7 +351,7 @@ object successor {
       suppressed
     }
 
-    final def unsafeDeleteRef(ref: FiberRef[_]): Unit =
+    final def unsafeDeleteRef[A](ref: FiberRef[A]): Unit =
       fiberRefs.remove(ref)
 
     final def unsafeDisableInterrupting(): Unit =
