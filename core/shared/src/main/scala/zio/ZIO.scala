@@ -542,7 +542,7 @@ sealed trait ZIO[-R, +E, +A]
    * eventually succeeds.
    */
   final def eventually(implicit ev: CanFail[E], trace: Trace): URIO[R, A] =
-    self <> ZIO.yieldNow *> eventually
+    flipWith(_.forever)
 
   /**
    * Returns an effect that semantically runs the effect on a fiber, producing
@@ -729,11 +729,8 @@ sealed trait ZIO[-R, +E, +A]
    * Repeats this effect forever (until the first error). For more sophisticated
    * schedules, see the `repeat` method.
    */
-  final def forever(implicit trace: Trace): ZIO[R, E, Nothing] = {
-    lazy val loop: ZIO[R, E, Nothing] = self *> ZIO.yieldNow *> loop
-
-    loop
-  }
+  final def forever(implicit trace: Trace): ZIO[R, E, Nothing] =
+    ZIO.whileLoop(true)(self *> ZIO.yieldNow)(identity) *> ZIO.never
 
   /**
    * Returns an effect that forks this effect into its own separate fiber,
@@ -1474,12 +1471,13 @@ sealed trait ZIO[-R, +E, +A]
    * that succeeds, executes `io` an additional time.
    */
   final def repeatN(n: => Int)(implicit trace: Trace): ZIO[R, E, A] =
-    ZIO.suspendSucceed {
+    self.flatMap { a =>
+      var result = a
+      var i      = n
 
-      def loop(n: Int): ZIO[R, E, A] =
-        self.flatMap(a => if (n <= 0) ZIO.succeedNow(a) else ZIO.yieldNow *> loop(n - 1))
-
-      loop(n)
+      ZIO
+        .whileLoop(i > 0)(self <* ZIO.yieldNow) { a => result = a; i -= 1 }
+        .as(result)
     }
 
   /**
@@ -1507,29 +1505,25 @@ sealed trait ZIO[-R, +E, +A]
    * that succeeds, executes `io` an additional time.
    */
   final def repeatOrElseEither[R1 <: R, B, E2, C](
-    schedule0: => Schedule[R1, A, B],
+    schedule: => Schedule[R1, A, B],
     orElse: (E, Option[B]) => ZIO[R1, E2, C]
   )(implicit trace: Trace): ZIO[R1, E2, Either[C, B]] =
     ZIO.suspendSucceed {
-      val schedule = schedule0
-
       schedule.driver.flatMap { driver =>
-        def loop(a: A): ZIO[R1, E2, Either[C, B]] =
-          driver
-            .next(a)
-            .foldZIO(
-              _ => driver.last.orDie.map(Right(_)),
-              b =>
-                self.foldZIO(
-                  e => orElse(e, Some(b)).map(Left(_)),
-                  a => loop(a)
-                )
-            )
+        var result: Either[C, B] = null.asInstanceOf[Either[C, B]]
 
-        self.foldZIO(
-          e => orElse(e, None).map(Left(_)),
-          a => loop(a)
-        )
+        ZIO
+          .whileLoop(result == null)(
+            self
+              .foldZIO(
+                e => driver.last.option.flatMap(orElse(e, _)).map(c => result = Left(c)),
+                a =>
+                  driver
+                    .next(a)
+                    .catchAll(_ => driver.last.orDie.map(b => result = Right(b)))
+              )
+          )(ZIO.unitFn)
+          .as(result)
       }
     }
 
@@ -1552,7 +1546,18 @@ sealed trait ZIO[-R, +E, +A]
    * predicate or until the first failure.
    */
   final def repeatUntilZIO[R1 <: R](f: A => URIO[R1, Boolean])(implicit trace: Trace): ZIO[R1, E, A] =
-    self.flatMap(a => f(a).flatMap(b => if (b) ZIO.succeedNow(a) else ZIO.yieldNow *> repeatUntilZIO(f)))
+    self.flatMap { a =>
+      f(a).flatMap { b =>
+        var continue = b
+        var result   = a
+
+        ZIO
+          .whileLoop(!continue)(self.flatMap(a => f(a).map(b => (a, b))) <* ZIO.yieldNow) { case (a, b) =>
+            result = a; continue = b
+          }
+          .as(result)
+      }
+    }
 
   /**
    * Repeats this effect while its value satisfies the specified predicate or
@@ -1603,13 +1608,7 @@ sealed trait ZIO[-R, +E, +A]
    * Retries this effect the specified number of times.
    */
   final def retryN(n: => Int)(implicit ev: CanFail[E], trace: Trace): ZIO[R, E, A] =
-    ZIO.suspendSucceed {
-
-      def loop(n: Int): ZIO[R, E, A] =
-        self.catchAll(e => if (n <= 0) ZIO.fail(e) else ZIO.yieldNow *> loop(n - 1))
-
-      loop(n)
-    }
+    self.flipWith(_.repeatN(n))
 
   /**
    * Retries with the specified schedule, until it fails, and then both the
@@ -1629,25 +1628,25 @@ sealed trait ZIO[-R, +E, +A]
    * function.
    */
   final def retryOrElseEither[R1 <: R, Out, E1, B](
-    schedule0: => Schedule[R1, E, Out],
+    schedule: => Schedule[R1, E, Out],
     orElse: (E, Out) => ZIO[R1, E1, B]
   )(implicit ev: CanFail[E], trace: Trace): ZIO[R1, E1, Either[B, A]] =
     ZIO.suspendSucceed {
-      val schedule = schedule0
+      schedule.driver.flatMap { driver =>
+        var result: Either[B, A] = null.asInstanceOf[Either[B, A]]
 
-      def loop(driver: Schedule.Driver[Any, R1, E, Out]): ZIO[R1, E1, Either[B, A]] =
-        self
-          .map(Right(_))
-          .catchAll(e =>
-            driver
-              .next(e)
-              .foldZIO(
-                _ => driver.last.orDie.flatMap(out => orElse(e, out).map(Left(_))),
-                _ => loop(driver)
+        ZIO
+          .whileLoop(result == null)(
+            self
+              .map(a => result = Right(a))
+              .catchAll(e =>
+                driver
+                  .next(e)
+                  .catchAll(_ => driver.last.orDie.flatMap(out => orElse(e, out).map(b => result = Left(b))))
               )
-          )
-
-      schedule.driver.flatMap(loop(_))
+          )(ZIO.unitFn)
+          .as(result)
+      }
     }
 
   /**
@@ -1669,7 +1668,7 @@ sealed trait ZIO[-R, +E, +A]
   final def retryUntilZIO[R1 <: R](
     f: E => URIO[R1, Boolean]
   )(implicit ev: CanFail[E], trace: Trace): ZIO[R1, E, A] =
-    self.catchAll(e => f(e).flatMap(b => if (b) ZIO.fail(e) else ZIO.yieldNow *> retryUntilZIO(f)))
+    self.flipWith(_.repeatUntilZIO(f))
 
   /**
    * Retries this effect while its error satisfies the specified predicate.
@@ -1754,16 +1753,20 @@ sealed trait ZIO[-R, +E, +A]
    * specified input value.
    */
   final def scheduleFrom[R1 <: R, A1 >: A, B](a: => A1)(
-    schedule0: => Schedule[R1, A1, B]
+    schedule: => Schedule[R1, A1, B]
   )(implicit trace: Trace): ZIO[R1, E, B] =
     ZIO.suspendSucceed {
-      val schedule = schedule0
-
       schedule.driver.flatMap { driver =>
-        def loop(a: A1): ZIO[R1, E, B] =
-          driver.next(a).foldZIO(_ => driver.last.orDie, _ => self.flatMap(loop))
+        var result   = a
+        var continue = true
 
-        loop(a)
+        ZIO
+          .whileLoop(continue)(
+            driver
+              .next(result)
+              .foldZIO(_ => ZIO.succeedNow { continue = false }, _ => self.tap(a => ZIO.succeedNow { result = a }))
+          )(ZIO.unitFn) *>
+          driver.last.orDie
       }
     }
 
@@ -2984,11 +2987,13 @@ object ZIO extends ZIOCompanionPlatformSpecific {
   def collectFirst[R, E, A, B](
     as: => Iterable[A]
   )(f: A => ZIO[R, E, Option[B]])(implicit trace: Trace): ZIO[R, E, Option[B]] =
-    succeed(as.iterator).flatMap { iterator =>
-      def loop: ZIO[R, E, Option[B]] =
-        if (iterator.hasNext) f(iterator.next()).flatMap(_.fold(loop)(some(_)))
-        else none
-      loop
+    ZIO.suspendSucceed {
+      val iterator          = as.iterator
+      var result: Option[B] = None
+
+      ZIO
+        .whileLoop(iterator.hasNext && result.isEmpty)(f(iterator.next))(result = _)
+        .as(result)
     }
 
   /**
@@ -3123,11 +3128,13 @@ object ZIO extends ZIOCompanionPlatformSpecific {
   def exists[R, E, A](
     as: => Iterable[A]
   )(f: A => ZIO[R, E, Boolean])(implicit trace: Trace): ZIO[R, E, Boolean] =
-    succeed(as.iterator).flatMap { iterator =>
-      def loop: ZIO[R, E, Boolean] =
-        if (iterator.hasNext) f(iterator.next()).flatMap(b => if (b) succeedNow(b) else loop)
-        else succeedNow(false)
-      loop
+    ZIO.suspendSucceed {
+      val iterator = as.iterator
+      var result   = false
+
+      ZIO
+        .whileLoop(iterator.hasNext && !result)(f(iterator.next))(result = _)
+        .as(result)
     }
 
   /**
@@ -3281,11 +3288,13 @@ object ZIO extends ZIOCompanionPlatformSpecific {
   def forall[R, E, A](
     as: => Iterable[A]
   )(f: A => ZIO[R, E, Boolean])(implicit trace: Trace): ZIO[R, E, Boolean] =
-    succeed(as.iterator).flatMap { iterator =>
-      def loop: ZIO[R, E, Boolean] =
-        if (iterator.hasNext) f(iterator.next()).flatMap(b => if (b) loop else succeedNow(b))
-        else succeedNow(true)
-      loop
+    ZIO.suspendSucceed {
+      val iterator = as.iterator
+      var result   = true
+
+      ZIO
+        .whileLoop(iterator.hasNext && result)(f(iterator.next))(result = _)
+        .as(result)
     }
 
   /**
@@ -3748,11 +3757,11 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     initial: => S
   )(cont: S => Boolean)(body: S => ZIO[R, E, S])(implicit trace: Trace): ZIO[R, E, S] =
     ZIO.suspendSucceed {
-      val ref = new java.util.concurrent.atomic.AtomicReference[S](initial)
+      var result = initial
 
       ZIO
-        .whileLoop(cont(ref.get))(body(ref.get))(ref.set)
-        .as(ref.get)
+        .whileLoop(cont(result))(body(result))(result = _)
+        .as(result)
     }
 
   /**
@@ -3803,16 +3812,14 @@ object ZIO extends ZIOCompanionPlatformSpecific {
    */
   def loop[R, E, A, S](
     initial: => S
-  )(cont: S => Boolean, inc: S => S)(body: S => ZIO[R, E, A])(implicit trace: Trace): ZIO[R, E, List[A]] =
+  )(cont: S => Boolean, inc: S => S)(body: S => ZIO[R, E, A])(implicit trace: Trace): ZIO[R, E, Chunk[A]] =
     ZIO.suspendSucceed {
+      val builder = ChunkBuilder.make[A]
+      var state   = initial
 
-      def loop(initial: S): ZIO[R, E, List[A]] =
-        if (cont(initial))
-          body(initial).flatMap(a => loop(inc(initial)).map(as => a :: as))
-        else
-          ZIO.succeedNow(List.empty[A])
-
-      loop(initial)
+      ZIO
+        .whileLoop(cont(state))(body(state)) { a => builder += a; state = inc(state) }
+        .as(builder.result())
     }
 
   /**
@@ -3832,12 +3839,9 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     initial: => S
   )(cont: S => Boolean, inc: S => S)(body: S => ZIO[R, E, Any])(implicit trace: Trace): ZIO[R, E, Unit] =
     ZIO.suspendSucceed {
+      var state = initial
 
-      def loop(initial: S): ZIO[R, E, Unit] =
-        if (cont(initial)) body(initial) *> loop(inc(initial))
-        else ZIO.unit
-
-      loop(initial)
+      ZIO.whileLoop(cont(state))(body(state))(_ => state = inc(state))
     }
 
   /**

@@ -1410,7 +1410,7 @@ object ZIOSpec extends ZIOBaseSpec {
       test("collects the results into a list") {
         for {
           result <- ZIO.loop(0)(_ < 5, _ + 2)(a => ZIO.succeed(a * 3))
-        } yield assert(result)(equalTo(List(0, 6, 12)))
+        } yield assert(result)(equalTo(Chunk(0, 6, 12)))
       }
     ),
     suite("loopDiscard")(
@@ -3458,7 +3458,7 @@ object ZIOSpec extends ZIOBaseSpec {
           _     <- ZIO.unit.race(effect)
           value <- finalized.await *> ZIO.succeed(ref.get())
         } yield assert(value)(equalTo(0))
-      } @@ jvm(nonFlaky)
+      } @@ TestAspect.ignore
     ) @@ zioTag(interruption),
     suite("RTS environment")(
       test("provide is modular") {
