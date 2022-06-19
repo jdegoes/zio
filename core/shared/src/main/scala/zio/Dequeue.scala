@@ -89,7 +89,7 @@ trait Dequeue[+A] extends Serializable {
     if (max < min) ZIO.succeedNow(Chunk.empty)
     else
       ZIO.suspendSucceed {
-        var builder = ChunkBuilder.make[A]
+        var builder = ChunkBuilder.make[A]()
         var taken   = 0
 
         ZIO.whileLoop {

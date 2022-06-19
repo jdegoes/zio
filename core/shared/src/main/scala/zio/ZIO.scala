@@ -3814,7 +3814,7 @@ object ZIO extends ZIOCompanionPlatformSpecific {
     initial: => S
   )(cont: S => Boolean, inc: S => S)(body: S => ZIO[R, E, A])(implicit trace: Trace): ZIO[R, E, Chunk[A]] =
     ZIO.suspendSucceed {
-      val builder = ChunkBuilder.make[A]
+      val builder = ChunkBuilder.make[A]()
       var state   = initial
 
       ZIO
