@@ -586,15 +586,15 @@ Let's try some examples:
 ```scala mdoc:compile-only
 import zio._
 
-val r1: ZIO[Any, Nothing, List[Int]] =
+val r1: ZIO[Any, Nothing, Chunk[Int]] =
   ZIO.loop(1)(_ <= 5, _ + 1)(n => ZIO.succeed(n)).debug
-// List(1, 2, 3, 4, 5)
+// Chunk(1, 2, 3, 4, 5)
 
-val r2: ZIO[Any, Nothing, List[Int]] =
+val r2: ZIO[Any, Nothing, Chunk[Int]] =
   ZIO.loop(1)(_ <= 5, _ + 1)(n => ZIO.succeed(n * 2)).debug
-// List(2, 4, 6, 8, 10)
+// Chunk(2, 4, 6, 8, 10)
 
-val r3: ZIO[Any, IOException, List[Unit]] =
+val r3: ZIO[Any, IOException, Chunk[Unit]] =
   ZIO.loop(1)(_ <= 5, _ + 1) { index =>
     Console.printLine(s"Currently at index $index")
   }.debug
@@ -603,7 +603,7 @@ val r3: ZIO[Any, IOException, List[Unit]] =
 // Currently at index 3
 // Currently at index 4
 // Currently at index 5
-// List((), (), (), (), ())
+// Chunk((), (), (), (), ())
 
 val r4: ZIO[Any, IOException, Unit] =
   ZIO.loopDiscard(1)(_ <= 5, _ + 1) { index =>
@@ -616,7 +616,7 @@ val r4: ZIO[Any, IOException, Unit] =
 // Currently at index 5
 // ()
 
-val r5: ZIO[Any, IOException, List[String]] =
+val r5: ZIO[Any, IOException, Chunk[String]] =
   Console.printLine("Please enter three names: ") *>
     ZIO.loop(1)(_ <= 3, _ + 1) { n =>
       Console.print(s"$n. ") *> Console.readLine
@@ -625,7 +625,7 @@ val r5: ZIO[Any, IOException, List[String]] =
 // 1. John
 // 2. Jane
 // 3. Joe
-// List(John, Jane, Joe)
+// Chunk(John, Jane, Joe)
 ```
 
 2. **`ZIO.iterate`**— To iterate with the given effectful operation we can use this combinator. During each iteration, it uses an effectful `body` operation to change the state, and it will continue the iteration while the `cont` function evaluates to true:
