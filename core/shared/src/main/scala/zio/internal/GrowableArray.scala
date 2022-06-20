@@ -15,52 +15,88 @@
  */
 package zio.internal
 
+import scala.reflect.ClassTag
+
 import zio.Chunk
 
-final class GrowableArray[A <: AnyRef](hint: Int) {
+final class GrowableArray[A: ClassTag](hint: Int) extends Iterable[A] { self =>
   import java.lang.System
 
-  private var stack = new Array[AnyRef](hint)
-  private var size  = 0
-
-  def length: Int = size
-
-  def apply(index: Int): A = stack(index).asInstanceOf[A] // No error checking for performance
-
-  def ensureCapacity(elements: Int): Unit = {
-    val newSize = size + elements
-
-    if (stack eq null) {
-      stack = new Array[AnyRef](newSize)
-    } else if (newSize > stack.length) {
-      val newStack = new Array[AnyRef](newSize)
-      System.arraycopy(stack, 0, newStack, 0, size)
-      stack = newStack
-    }
-  }
+  private var array = if (hint < 0) null else new Array[A](hint)
+  private var _size = 0
 
   def +=(a: A): Unit = {
     ensureCapacity(1)
 
-    stack(size) = a
-    size += 1
+    array(_size) = a
+    _size += 1
   }
 
-  def ++=(as: Array[A]): Unit = {
+  def ++=(as: Chunk[A]): Unit = {
     ensureCapacity(as.length)
 
-    System.arraycopy(as, 0, stack, size, as.length)
+    var i = 0
+    var j = _size
+    while (i < as.length) {
+      array(j) = as(i)
+      i = i + 1
+      j = j + 1
+    }
 
-    size += as.length
+    _size = _size + as.length
   }
 
-  def toChunk: Chunk[A] = {
-    ensureCapacity(0)
+  def apply(index: Int): A = array(index) // No error checking for performance
 
-    val chunk = Chunk.fromArray(stack.asInstanceOf[Array[A]]).take(size)
+  def build(): Chunk[A] =
+    if ((array eq null) || _size == 0) Chunk.empty
+    else {
+      val copy = new Array[A](_size)
 
-    stack = null
+      System.arraycopy(array, 0, copy, 0, _size)
 
-    chunk
+      _size = 0
+
+      Chunk.fromArray(copy)
+    }
+
+  def ensureCapacity(elements: Int): Unit = {
+    val newSize = _size + elements
+
+    if (array eq null) {
+      array = new Array[A](newSize)
+    } else if (newSize > array.length) {
+      val newStack = new Array(newSize + _size / 2)
+      System.arraycopy(array, 0, newStack, 0, _size)
+      array = newStack
+    }
   }
+
+  def iterator: Iterator[A] =
+    new Iterator[A] {
+      var index = 0
+
+      def hasNext: Boolean = index < self._size
+
+      def next(): A = {
+        if (!hasNext) throw new NoSuchElementException("There are no elements to iterate")
+
+        val value = self.array(index)
+
+        index = index + 1
+
+        value
+      }
+    }
+
+  def length: Int = _size
+
+  private[zio] def asChunk(): Chunk[A] =
+    if (array == null) Chunk.empty
+    else Chunk.fromArray(array).take(_size)
+
+  override def toString(): String = self.mkString("GrowableArray(", ",", ")")
+}
+object GrowableArray {
+  def make[A: ClassTag](hint: Int): GrowableArray[A] = new GrowableArray[A](hint)
 }
