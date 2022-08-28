@@ -1,6 +1,6 @@
 ---
 id: index
-title: "Introduction"
+title: "Introduction to ZIO Streams"
 ---
 
 ```scala mdoc:invisible
@@ -15,6 +15,8 @@ import java.io.IOException
 The primary goal of a streaming library is to introduce **a high-level API that abstracts the mechanism of reading and writing operations using data sources and destinations**.
 
 A streaming library helps us to concentrate on the business logic and separates us from low-level implementation details.
+
+## Use Cases
 
 There are lots of examples of streaming that people might not recognize, this is a common problem especially for beginners. A beginner might say "I don't need a streaming library. Why should I use that?". It's because they don't see streams. Once we use a streaming library, we start to see streams everywhere but until then we don't understand where they are. 
 
@@ -193,9 +195,9 @@ By using ZIO streams, we do not care how big is a file, we just concentrate on t
 
 To define a stream workflow there are three core abstraction in ZIO stream; _Streams_, _Sinks_, and _Pipelines_:
 
-1. **[ZStream](zstream.md)** — Streams act as _sources_ of values. We get elements from them. They produce values.
+1. **[ZStream](zstream/zstream.md)** — Streams act as _sources_ of values. We get elements from them. They produce values.
 
-2. **[ZSink](zsink.md)** — Sinks act as _receptacles_ or _sinks_ for values. They consume values.
+2. **[ZSink](zsink/zsink.md)** — Sinks act as _receptacles_ or _sinks_ for values. They consume values.
 
 3. **[ZPipeline](zpipeline.md)** — Pipelines act as _transformers_ of values. They take individual values, and they transform or decode them. 
 
@@ -223,7 +225,7 @@ Some sinks will produce nothing as their return type parameter is `Nothing`, whi
 
 Just like Streams, sinks are super compositional. Sink's operators allow us to combine two sinks together or transform them. That allows us to generate a vast variety of sinks.
 
-Streams and Sinks are duals in category theory. One produces value, and the other one consumes them. They are mere images of each other. They both have to exist. A streaming library cannot be complete unless it has streams and sinks. That is why ZIO has a sort of better design than FS2 because FS2 has a stream, but it doesn't have a sink. Its Sink is just faked. It doesn't actually have a real sink. ZIO has a real sink, and we can compose them to generate new sinks.
+Streams and Sinks are duals in category theory. One produces values, and the other one consumes them. They are mere images of each other. They both have to exist. A streaming library cannot be complete unless it has streams and sinks. That is why ZIO has a sort of better design than FS2 because FS2 has a stream, but it doesn't have a sink. Its Sink is just faked. It doesn't actually have a real sink. ZIO has a real sink, and we can compose them to generate new sinks.
 
 ### Pipeline
 

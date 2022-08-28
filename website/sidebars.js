@@ -18,23 +18,17 @@ module.exports = {
       label: "Core",
       collapsed: false,
       items: [
+        "reference/core/zio/zio",
         {
           type: "category",
-          link: { type: 'doc', id: 'reference/core/zio/zio' },
-          label: "ZIO",
+          collapsed: true,
+          label: "ZIO Type Aliases",
           items: [
-            {
-              type: "category",
-              collapsed: true,
-              label: "Type Aliases",
-              items: [
-                "reference/core/zio/uio",
-                "reference/core/zio/urio",
-                "reference/core/zio/task",
-                "reference/core/zio/rio",
-                "reference/core/zio/io",
-              ]
-            }
+            "reference/core/zio/uio",
+            "reference/core/zio/urio",
+            "reference/core/zio/task",
+            "reference/core/zio/rio",
+            "reference/core/zio/io",
           ]
         },
         "reference/core/zioapp",
@@ -49,7 +43,6 @@ module.exports = {
       link: { type: "doc", id: "reference/error-management/index" },
       items:
         [
-
           {
             type: "category",
             label: "Three Types of Errors in ZIO",
@@ -61,7 +54,6 @@ module.exports = {
                 "reference/error-management/types/fatals"
               ]
           },
-
           "reference/error-management/imperative-vs-declarative",
           "reference/error-management/expected-and-unexpected-errors",
           "reference/error-management/exceptional-and-unexceptional-effects",
@@ -118,14 +110,49 @@ module.exports = {
     },
     {
       type: "category",
-      label: "Scheduling",
-      link: { type: "doc", id: "reference/schedule/index" },
+      label: "Built-in Services",
+      link: { type: "doc", id: "reference/services/index" },
       items: [
-        "reference/schedule/repetition",
-        "reference/schedule/retrying",
-        "reference/schedule/built-in-schedules",
-        "reference/schedule/combinators",
-        "reference/schedule/examples",
+        "reference/services/console",
+        "reference/services/clock",
+        "reference/services/random",
+        "reference/services/system"
+      ]
+    },
+    {
+      type: "category",
+      label: "Writing ZIO Services",
+      link: { type: "doc", id: "reference/service-pattern/introduction" },
+      items: [
+        "reference/service-pattern/service-pattern",
+        "reference/service-pattern/defining-polymorphic-services-in-zio",
+        "reference/service-pattern/generating-accessor-methods-using-macros",
+        "reference/service-pattern/the-three-laws-of-zio-environment"
+      ]
+    },
+    {
+      type: "category",
+      label: "Dependency Injection",
+      link: { type: "doc", id: "reference/di/index" },
+      items: [
+        "reference/di/motivation",
+        "reference/di/zlayer-constructor-as-a-value",
+        "reference/di/dependency-injection-in-zio",
+        ,
+        {
+          type: "category",
+          label: "Building Dependency Graph",
+          link: { type: "doc", id: "reference/di/building-dependency-graph" },
+          items: [
+            "reference/di/manual-layer-construction",
+            "reference/di/automatic-layer-construction",
+          ]
+        },
+        "reference/di/dependency-propagation",
+        "reference/di/providing-different-implementation-of-a-service",
+        "reference/di/dependency-memoization",
+        "reference/di/overriding-dependency-graph",
+        "reference/di/examples",
       ]
     },
     {
@@ -153,19 +180,20 @@ module.exports = {
                 ]
               }
             ]
-          },
-          {
-            type: "category",
-            label: "Built-in Services",
-            link: { type: "doc", id: "reference/contextual/services/index" },
-            items: [
-              "reference/contextual/services/console",
-              "reference/contextual/services/clock",
-              "reference/contextual/services/random",
-              "reference/contextual/services/system"
-            ]
           }
         ]
+    },
+    {
+      type: "category",
+      label: "Scheduling",
+      link: { type: "doc", id: "reference/schedule/index" },
+      items: [
+        "reference/schedule/repetition",
+        "reference/schedule/retrying",
+        "reference/schedule/built-in-schedules",
+        "reference/schedule/combinators",
+        "reference/schedule/examples",
+      ]
     },
     {
       type: "category",
@@ -198,6 +226,7 @@ module.exports = {
     {
       type: "category",
       label: "Concurrency",
+      link: { type: "doc", id: "reference/concurrency/index" },
       items: [
         {
           type: "category",
@@ -275,35 +304,44 @@ module.exports = {
       label: "Streaming",
       link: { type: "doc", id: "reference/stream/index" },
       items: [
+        "reference/stream/installation",
         {
           type: "category",
-          label: "Main Components",
+          label: "ZStream",
+          link: { type: "doc", id: "reference/stream/zstream/index" },
           items: [
-            {
-              type: "category",
-              label: "ZStream",
-              items: [
-                "reference/stream/zstream",
-                "reference/stream/stream",
-                "reference/stream/ustream",
-              ]
-            },
-            {
-              type: "category",
-              label: "ZPipeline",
-              items: [
-                "reference/stream/zpipeline",
-              ]
-            },
-            {
-              type: "category",
-              label: "ZSink",
-              items: [
-                "reference/stream/zsink",
-                "reference/stream/sink",
-              ]
-            },
-            "reference/stream/zchannel"
+            "reference/stream/zstream/type-aliases",
+            "reference/stream/zstream/streams-are-chunked-by-default",
+            "reference/stream/zstream/creating-zio-streams",
+            "reference/stream/zstream/resourceful-streams",
+            "reference/stream/zstream/operations",
+            "reference/stream/zstream/consuming-streams",
+            "reference/stream/zstream/error-handling",
+            "reference/stream/zstream/scheduling",
+          ]
+        },
+        "reference/stream/zpipeline",
+        {
+          type: "category",
+          label: "ZSink",
+          link: { type: "doc", id: "reference/stream/zsink/index" },
+          items: [
+            "reference/stream/zsink/creating-sinks",
+            "reference/stream/zsink/operations",
+            "reference/stream/zsink/parallel-operators",
+            "reference/stream/zsink/leftovers",
+          ]
+        },
+        {
+          type: "category",
+          label: "ZChannel",
+          link: { type: "doc", id: "reference/stream/zchannel/index" },
+          items: [
+            "reference/stream/zchannel/creating-channels",
+            "reference/stream/zchannel/composing-channels",
+            "reference/stream/zchannel/running-a-channel",
+            "reference/stream/zchannel/channel-operations",
+            "reference/stream/zchannel/channel-interruption",
           ]
         },
         "reference/stream/subscription-ref"
@@ -334,24 +372,81 @@ module.exports = {
       label: "Testing",
       link: { type: "doc", id: "reference/test/index" },
       items: [
+        "reference/test/why-zio-test",
+        "reference/test/installation",
+        "reference/test/writing-our-first-test",
+        "reference/test/running-tests",
+        {
+          type: "category",
+          label: "Assertions",
+          link: { type: "doc", id: "reference/test/assertions/index" },
+          items: [
+            "reference/test/assertions/smart-assertions",
+            {
+              type: "category",
+              label: "Classic Assertions",
+              link: { type: "doc", id: "reference/test/assertions/classic-assertions" },
+              items: [
+                "reference/test/assertions/operations",
+                "reference/test/assertions/built-in-assertions",
+                "reference/test/assertions/examples",
+                "reference/test/assertions/how-it-works"
+              ]
+            },
+          ]
+        },
+        "reference/test/test-hierarchies-and-organization",
+        "reference/test/sharing-layers-within-the-same-file",
+        "reference/test/sharing-layers-between-multiple-files",
         "reference/test/spec",
-        "reference/test/assertion",
         {
           type: "category",
           label: "Test Services",
-          link: { type: "doc", id: "reference/test/environment/index" },
+          link: { type: "doc", id: "reference/test/services/index" },
           items: [
-            "reference/test/environment/console",
-            "reference/test/environment/clock",
-            "reference/test/environment/random",
-            "reference/test/environment/system",
-            "reference/test/environment/live",
-            "reference/test/environment/config",
-            "reference/test/environment/sized",
+            "reference/test/services/console",
+            "reference/test/services/clock",
+            "reference/test/services/random",
+            "reference/test/services/system",
+            "reference/test/services/live",
+            "reference/test/services/config",
+            "reference/test/services/sized",
           ]
         },
-        "reference/test/test-aspect",
-        "reference/test/gen",
+        {
+          type: "category",
+          label: "Test Aspects",
+          link: { type: "doc", id: "reference/test/aspects/index" },
+          items: [
+            "reference/test/aspects/before-after-around",
+            "reference/test/aspects/conditional",
+            "reference/test/aspects/debugging-and-diagnostics",
+            "reference/test/aspects/environment-specific-tests",
+            "reference/test/aspects/execution-strategy",
+            "reference/test/aspects/flaky-and-non-flaky-tests",
+            "reference/test/aspects/ignoring-tests",
+            "reference/test/aspects/non-deterministic-test-data",
+            "reference/test/aspects/passing-failed-tests",
+            "reference/test/aspects/repeat-and-retry",
+            "reference/test/aspects/restoring-state-of-test-services",
+            "reference/test/aspects/sized",
+            "reference/test/aspects/annotating-tests",
+            "reference/test/aspects/configuring-tests",
+            "reference/test/aspects/timing-out-tests",
+          ]
+        },
+        "reference/test/dynamic-test-generation",
+        {
+          type: "category",
+          label: "Property Testing",
+          link: { type: "doc", id: "reference/test/property-testing/index" },
+          items: [
+            "reference/test/property-testing/gen",
+            "reference/test/property-testing/operators",
+            "reference/test/property-testing/shrinking",
+            "reference/test/property-testing/generators",
+          ]
+        }
       ]
     },
     {

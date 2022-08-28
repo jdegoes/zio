@@ -16,7 +16,7 @@
 
 package zio.test
 
-import zio.{Console, FiberRef, IO, Ref, Trace, UIO, URIO, Unsafe, ZIO, ZLayer}
+import zio.{Chunk, Console, FiberRef, IO, Ref, Trace, UIO, URIO, Unsafe, ZIO, ZLayer}
 import zio.internal.stacktracer.Tracer
 import zio.stacktracer.TracingImplicits.disableAutoTrace
 
@@ -75,6 +75,7 @@ object TestConsole extends Serializable {
   case class Test(
     consoleState: Ref.Atomic[TestConsole.Data],
     live: Live,
+    annotations: Annotations,
     debugState: FiberRef[Boolean]
   ) extends Console
       with TestConsole {
@@ -118,7 +119,9 @@ object TestConsole extends Serializable {
      * with an `EOFException`.
      */
     def readLine(implicit trace: Trace): IO[IOException, String] =
-      ZIO.attempt(unsafe.readLine()(Unsafe.unsafe)).refineToOrDie[IOException]
+      ZIO.attempt(unsafe.readLine()(Unsafe.unsafe)).refineToOrDie[IOException].tap { line =>
+        annotations.annotate(TestAnnotation.output, Chunk(line))
+      }
 
     /**
      * Returns the contents of the output buffer. The first value written to the
@@ -153,7 +156,8 @@ object TestConsole extends Serializable {
      * character.
      */
     override def printLine(line: => Any)(implicit trace: Trace): IO[IOException, Unit] =
-      ZIO.succeed(unsafe.printLine(line)(Unsafe.unsafe)) *>
+      annotations.annotate(TestAnnotation.output, Chunk(line.toString)) *>
+        ZIO.succeed(unsafe.printLine(line)(Unsafe.unsafe)) *>
         live.provide(Console.printLine(line)).whenZIO(debugState.get).unit
 
     /**
@@ -222,24 +226,25 @@ object TestConsole extends Serializable {
    */
   def make(data: Data, debug: Boolean = true)(implicit
     trace: Trace
-  ): ZLayer[Live, Nothing, TestConsole] =
+  ): ZLayer[Live with Annotations, Nothing, TestConsole] =
     ZLayer.scoped {
       for {
-        live     <- ZIO.service[Live]
-        ref      <- ZIO.succeed(Ref.unsafe.make(data)(Unsafe.unsafe))
-        debugRef <- FiberRef.make(debug)
-        test      = Test(ref, live, debugRef)
-        _        <- ZIO.withConsoleScoped(test)
+        live        <- ZIO.service[Live]
+        annotations <- ZIO.service[Annotations]
+        ref         <- ZIO.succeed(Ref.unsafe.make(data)(Unsafe.unsafe))
+        debugRef    <- FiberRef.make(debug)
+        test         = Test(ref, live, annotations, debugRef)
+        _           <- ZIO.withConsoleScoped(test)
       } yield test
     }
 
   val any: ZLayer[TestConsole, Nothing, TestConsole] =
     ZLayer.environment[TestConsole](Tracer.newTrace)
 
-  val debug: ZLayer[Live, Nothing, TestConsole] =
+  val debug: ZLayer[Live with Annotations, Nothing, TestConsole] =
     make(Data(Nil, Vector()), true)(Tracer.newTrace)
 
-  val silent: ZLayer[Live, Nothing, TestConsole] =
+  val silent: ZLayer[Live with Annotations, Nothing, TestConsole] =
     make(Data(Nil, Vector()), false)(Tracer.newTrace)
 
   /**

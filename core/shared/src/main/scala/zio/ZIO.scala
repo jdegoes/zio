@@ -674,14 +674,14 @@ sealed trait ZIO[-R, +E, +A]
 
   /**
    * A more powerful version of `fold` that allows recovering from any kind of
-   * failure except interruptions.
+   * failure except external interruption.
    */
   final def foldCause[B](failure: Cause[E] => B, success: A => B)(implicit trace: Trace): URIO[R, B] =
     foldCauseZIO(c => ZIO.succeedNow(failure(c)), a => ZIO.succeedNow(success(a)))
 
   /**
    * A more powerful version of `foldZIO` that allows recovering from any kind
-   * of failure except interruptions.
+   * of failure except external interruption.
    */
   final def foldCauseZIO[R1 <: R, E2, B](
     failure: Cause[E] => ZIO[R1, E2, B],
@@ -772,7 +772,16 @@ sealed trait ZIO[-R, +E, +A]
    */
   final def forkIn(scope: => Scope)(implicit trace: Trace): URIO[R, Fiber.Runtime[E, A]] =
     ZIO.uninterruptibleMask { restore =>
-      restore(self).forkDaemon.tap(fiber => scope.addFinalizer(fiber.interrupt))
+      def interrupt(fiber: Fiber.Runtime[Any, Any]): ZIO[Any, Nothing, Any] =
+        ZIO.fiberIdWith { fiberId =>
+          if (fiberId == fiber.id) ZIO.unit else fiber.interrupt
+        }
+
+      scope.fork.flatMap { child =>
+        restore(self).onExit(child.close(_)).forkDaemon.tap { fiber =>
+          child.addFinalizer(interrupt(fiber))
+        }
+      }
     }
 
   /**
@@ -787,9 +796,7 @@ sealed trait ZIO[-R, +E, +A]
    * Forks the fiber in a [[Scope]], interrupting it when the scope is closed.
    */
   final def forkScoped(implicit trace: Trace): ZIO[R with Scope, Nothing, Fiber.Runtime[E, A]] =
-    ZIO.uninterruptibleMask { restore =>
-      restore(self).forkDaemon.tap(fiber => ZIO.addFinalizer(fiber.interrupt))
-    }
+    ZIO.scopeWith(scope => self.forkIn(scope))
 
   /**
    * Like fork but handles an error with the provided handler.
@@ -1386,6 +1393,7 @@ sealed trait ZIO[-R, +E, +A]
           },
           leftFiber.id <> rightFiber.id
         )
+        .onInterrupt(leftFiber.interrupt <&> rightFiber.interrupt)
     }
 
   /**
@@ -1995,6 +2003,16 @@ sealed trait ZIO[-R, +E, +A]
     trace: Trace
   ): ZIO[R1, E1, A] =
     self.tap(f.applyOrElse(_, (_: A) => ZIO.unit))
+
+  /**
+   * Returns an effect that effectfully "peeks" at the failure of this effect.
+   * If the partial function isn't defined at the input, the result is
+   * equivalent to the original effect.
+   */
+  final def tapSomeError[R1 <: R, E1 >: E](
+    f: PartialFunction[E, ZIO[R1, E1, Any]]
+  )(implicit ev: CanFail[E], trace: Trace): ZIO[R1, E1, A] =
+    self.tapError(f.applyOrElse(_, (_: E) => ZIO.unit))
 
   /**
    * Returns a new effect that executes this one and times the execution.
@@ -5507,35 +5525,18 @@ object ZIO extends ZIOCompanionPlatformSpecific with ZIOCompanionVersionSpecific
   ): ZIO[R, E, Unit] =
     foreachParUnboundedDiscard(as)(ZIO.identityFn)
 
-  private def foreachPar[R, E, A, B, Collection[+Element] <: Iterable[Element]](n0: => Int)(
+  private def foreachPar[R, E, A, B, Collection[+Element] <: Iterable[Element]](n: => Int)(
     as: Collection[A]
   )(
     fn: A => ZIO[R, E, B]
   )(implicit bf: BuildFrom[Collection[A], B, Collection[B]], trace: Trace): ZIO[R, E, Collection[B]] =
     ZIO.suspendSucceed {
-      val n = n0
-      if (n < 1) ZIO.dieMessage(s"Unexpected nonpositive value `$n` passed to foreachPar.")
-      else {
-        val size = as.size
-        if (size == 0) ZIO.succeedNow(bf.newBuilder(as).result())
-        else {
-
-          def worker(queue: Queue[(A, Int)], array: Array[AnyRef]): ZIO[R, E, Unit] =
-            queue.poll.flatMap {
-              case Some((a, n)) =>
-                fn(a).tap(b => ZIO.succeed(array(n) = b.asInstanceOf[AnyRef])) *> worker(queue, array)
-              case None => ZIO.unit
-            }
-
-          val array = Array.ofDim[AnyRef](size)
-
-          for {
-            queue <- Queue.bounded[(A, Int)](size)
-            _     <- queue.offerAll(as.zipWithIndex)
-            _     <- ZIO.collectAllParUnboundedDiscard(ZIO.replicate(n)(worker(queue, array)))
-          } yield bf.fromSpecific(as)(array.asInstanceOf[Array[B]])
-        }
+      val array = Array.ofDim[AnyRef](as.size)
+      val zioFunction: ((A, Int)) => ZIO[R, E, Any] = { case (a, i) =>
+        fn(a).flatMap(b => succeedNow(array(i) = b.asInstanceOf[AnyRef]))
       }
+      foreachParDiscard(n)(as.zipWithIndex)(zioFunction) *>
+        succeedNow(bf.fromSpecific(as)(array.asInstanceOf[Array[B]]))
     }
 
   private def foreachParDiscard[R, E, A](
@@ -5545,6 +5546,7 @@ object ZIO extends ZIOCompanionPlatformSpecific with ZIOCompanionVersionSpecific
       val as   = as0
       val size = as.size
       if (size == 0) ZIO.unit
+      else if (size == 1) f(as.head).unit
       else {
 
         def worker(queue: Queue[A]): ZIO[R, E, Unit] =
@@ -5579,10 +5581,11 @@ object ZIO extends ZIOCompanionPlatformSpecific with ZIOCompanionVersionSpecific
     as0: => Iterable[A]
   )(f: A => ZIO[R, E, Any])(implicit trace: Trace): ZIO[R, E, Unit] =
     ZIO.suspendSucceed {
-      val as = as0
-      if (as.isEmpty) ZIO.unit
+      val as   = as0
+      val size = as.size
+      if (size == 0) ZIO.unit
+      else if (size == 1) f(as.head).unit
       else {
-        val size = as.size
         ZIO.uninterruptibleMask { restore =>
           val promise = Promise.unsafe.make[Unit, Unit](FiberId.None)(Unsafe.unsafe)
           val ref     = new java.util.concurrent.atomic.AtomicInteger(0)
